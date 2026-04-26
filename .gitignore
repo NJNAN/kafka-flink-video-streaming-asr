@@ -1,0 +1,73 @@
+# ------------------------------
+# Python
+# ------------------------------
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# ------------------------------
+# Virtual environments
+# ------------------------------
+.venv/
+venv/
+env/
+
+# ------------------------------
+# IDE / Editor
+# ------------------------------
+.vscode/
+.idea/
+*.code-workspace
+
+# ------------------------------
+# OS files
+# ------------------------------
+.DS_Store
+Thumbs.db
+
+# ------------------------------
+# Local environment files
+# ------------------------------
+.env
+.env.*
+!.env.example
+
+# ------------------------------
+# Logs
+# ------------------------------
+*.log
+*.out
+*.pid
+
+# ------------------------------
+# Local media sources
+# ------------------------------
+/input*.mp4
+/input*.mkv
+/input*.avi
+/input*.mov
+/input*.flv
+/videos/*
+!/videos/.gitkeep
+
+# ------------------------------
+# Generated audio / subtitle outputs
+# ------------------------------
+/data/audio/*
+!/data/audio/.gitkeep
+/data/results/*
+!/data/results/.gitkeep
+
+# ------------------------------
+# Local model cache
+# ------------------------------
+/models/*
+!/models/.gitkeep

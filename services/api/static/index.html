@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>StreamSense Dashboard</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div>
+        <h1>StreamSense</h1>
+        <p>视频流语音转写与关键词分析系统</p>
+      </div>
+      <div class="status">
+        <span id="consumer-dot" class="dot"></span>
+        <span id="consumer-text">连接中</span>
+      </div>
+    </header>
+
+    <main class="layout">
+      <section class="panel metrics">
+        <div>
+          <span class="label">字幕数</span>
+          <strong id="transcript-count">0</strong>
+        </div>
+        <div>
+          <span class="label">关键词事件</span>
+          <strong id="keyword-count">0</strong>
+        </div>
+        <div>
+          <span class="label">最近延迟</span>
+          <strong id="latest-latency">-</strong>
+        </div>
+      </section>
+
+      <section class="panel transcripts">
+        <div class="panel-title">
+          <h2>实时字幕</h2>
+        </div>
+        <div id="transcript-list" class="list"></div>
+      </section>
+
+      <section class="panel keywords">
+        <div class="panel-title">
+          <h2>关键词事件</h2>
+        </div>
+        <div id="keyword-list" class="list"></div>
+      </section>
+    </main>
+
+    <script src="/static/app.js"></script>
+  </body>
+</html>
+

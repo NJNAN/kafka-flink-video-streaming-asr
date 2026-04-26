@@ -1,0 +1,147 @@
+import json
+import os
+import time
+from typing import Any
+
+import requests
+from pyflink.common import SimpleStringSchema, Types, WatermarkStrategy
+from pyflink.datastream import StreamExecutionEnvironment
+from pyflink.datastream.connectors.kafka import (
+    DeliveryGuarantee,
+    KafkaOffsetsInitializer,
+    KafkaRecordSerializationSchema,
+    KafkaSink,
+    KafkaSource,
+)
+
+
+BOOTSTRAP_SERVERS = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "kafka:9092")
+AUDIO_TOPIC = os.getenv("AUDIO_TOPIC", "audio-segment")
+TRANSCRIPT_TOPIC = os.getenv("TRANSCRIPT_TOPIC", "transcription-result")
+ASR_URL = os.getenv("ASR_URL", "http://asr:8000").rstrip("/")
+ASR_TIMEOUT_SECONDS = int(os.getenv("ASR_TIMEOUT_SECONDS", "120"))
+
+
+def now_ms() -> int:
+    return int(time.time() * 1000)
+
+
+def safe_get(data: dict[str, Any], key: str, default: Any = "") -> Any:
+    """从字典取值的小工具，避免 KeyError 让 Flink 作业直接失败。"""
+    return data.get(key, default)
+
+
+def transcribe_segment(raw_message: str) -> str:
+    """Flink 的核心处理函数：收到音频片段消息，调用本地 ASR 服务。"""
+    flink_receive_time = now_ms()
+
+    try:
+        audio_message = json.loads(raw_message)
+    except json.JSONDecodeError as exc:
+        return json.dumps(
+            {
+                "status": "error",
+                "error": f"非法 JSON: {exc}",
+                "raw_message": raw_message,
+                "flink_receive_time_ms": flink_receive_time,
+                "flink_finish_time_ms": now_ms(),
+            },
+            ensure_ascii=False,
+        )
+
+    request_body = {
+        "segment_id": safe_get(audio_message, "segment_id"),
+        "stream_id": safe_get(audio_message, "stream_id"),
+        "run_id": safe_get(audio_message, "run_id"),
+        "file_path": safe_get(audio_message, "file_path"),
+        "start_time_ms": safe_get(audio_message, "start_time_ms", 0),
+        "end_time_ms": safe_get(audio_message, "end_time_ms", 0),
+    }
+
+    try:
+        response = requests.post(
+            f"{ASR_URL}/transcribe",
+            json=request_body,
+            timeout=ASR_TIMEOUT_SECONDS,
+        )
+        response.raise_for_status()
+        result = response.json()
+        status = result.get("status", "ok")
+        error = ""
+    except Exception as exc:
+        response_text = ""
+        if "response" in locals():
+            response_text = getattr(response, "text", "")[:500]
+        result = {
+            **request_body,
+            "text": "",
+            "language": "",
+            "inference_time_ms": 0,
+        }
+        status = "error"
+        error = f"{exc}; response={response_text}" if response_text else str(exc)
+
+    finish_time = now_ms()
+    created_at_ms = safe_get(audio_message, "created_at_ms", flink_receive_time)
+
+    # 保留每个阶段的时间，后续论文可以用这些字段做延迟分析。
+    result.update(
+        {
+            "status": status,
+            "error": error,
+            "audio_created_at_ms": created_at_ms,
+            "flink_receive_time_ms": flink_receive_time,
+            "flink_finish_time_ms": finish_time,
+            "flink_process_time_ms": finish_time - flink_receive_time,
+            "end_to_end_time_ms": finish_time - int(created_at_ms),
+        }
+    )
+    return json.dumps(result, ensure_ascii=False)
+
+
+def build_kafka_source() -> KafkaSource:
+    return (
+        KafkaSource.builder()
+        .set_bootstrap_servers(BOOTSTRAP_SERVERS)
+        .set_topics(AUDIO_TOPIC)
+        .set_group_id("flink-asr-transcription")
+        # 使用 earliest 可以避免 ASR 首次下载/加载模型较慢时，漏掉已经进入 Kafka 的真实视频片段。
+        .set_starting_offsets(KafkaOffsetsInitializer.earliest())
+        .set_value_only_deserializer(SimpleStringSchema())
+        .build()
+    )
+
+
+def build_kafka_sink() -> KafkaSink:
+    serializer = (
+        KafkaRecordSerializationSchema.builder()
+        .set_topic(TRANSCRIPT_TOPIC)
+        .set_value_serialization_schema(SimpleStringSchema())
+        .build()
+    )
+    return (
+        KafkaSink.builder()
+        .set_bootstrap_servers(BOOTSTRAP_SERVERS)
+        .set_record_serializer(serializer)
+        .set_delivery_guarantee(DeliveryGuarantee.AT_LEAST_ONCE)
+        .build()
+    )
+
+
+def main() -> None:
+    env = StreamExecutionEnvironment.get_execution_environment()
+    env.set_parallelism(1)
+    env.enable_checkpointing(30_000)
+
+    source = build_kafka_source()
+    sink = build_kafka_sink()
+
+    stream = env.from_source(source, WatermarkStrategy.no_watermarks(), "audio-segment-source")
+    result_stream = stream.map(transcribe_segment, output_type=Types.STRING())
+    result_stream.sink_to(sink)
+
+    env.execute("video-audio-transcription-job")
+
+
+if __name__ == "__main__":
+    main()

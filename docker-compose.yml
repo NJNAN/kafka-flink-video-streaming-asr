@@ -1,0 +1,239 @@
+services:
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.6.1
+    container_name: streamsense-zookeeper
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    ports:
+      - "2181:2181"
+
+  kafka:
+    image: confluentinc/cp-kafka:7.6.1
+    container_name: streamsense-kafka
+    depends_on:
+      - zookeeper
+    ports:
+      - "9092:9092"
+      - "29092:29092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:29092
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+
+  topic-init:
+    image: confluentinc/cp-kafka:7.6.1
+    container_name: streamsense-topic-init
+    depends_on:
+      - kafka
+    environment:
+      AUDIO_TOPIC: ${AUDIO_TOPIC:-audio-segment}
+      TRANSCRIPT_TOPIC: ${TRANSCRIPT_TOPIC:-transcription-result}
+      KEYWORD_TOPIC: ${KEYWORD_TOPIC:-keyword-event}
+      HOTWORD_UPDATE_TOPIC: ${HOTWORD_UPDATE_TOPIC:-streamsense.hotword.updates}
+      LOG_DIR: /tmp
+    command: >
+      bash -lc "export LOG_DIR=/tmp &&
+      cub kafka-ready -b kafka:9092 1 90 &&
+      kafka-topics --bootstrap-server kafka:9092 --create --if-not-exists --topic $$AUDIO_TOPIC --partitions 3 --replication-factor 1 &&
+      kafka-topics --bootstrap-server kafka:9092 --create --if-not-exists --topic $$TRANSCRIPT_TOPIC --partitions 3 --replication-factor 1 &&
+      kafka-topics --bootstrap-server kafka:9092 --create --if-not-exists --topic $$KEYWORD_TOPIC --partitions 3 --replication-factor 1 &&
+      kafka-topics --bootstrap-server kafka:9092 --create --if-not-exists --topic $$HOTWORD_UPDATE_TOPIC --partitions 3 --replication-factor 1"
+    restart: "no"
+
+  redis:
+    image: redis:7-alpine
+    container_name: streamsense-redis
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+
+  asr:
+    build:
+      context: ./services/asr
+    container_name: streamsense-asr
+    gpus: all
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      HOTWORD_UPDATE_TOPIC: ${HOTWORD_UPDATE_TOPIC:-streamsense.hotword.updates}
+      ASR_MODEL: ${ASR_MODEL:-large-v3}
+      ASR_MODEL_PATH: ${ASR_MODEL_PATH:-}
+      ASR_MODEL_CACHE: /models
+      HF_HUB_DISABLE_XET: ${HF_HUB_DISABLE_XET:-1}
+      HF_HUB_ENABLE_HF_TRANSFER: ${HF_HUB_ENABLE_HF_TRANSFER:-1}
+      ASR_DEVICE: ${ASR_DEVICE:-cuda}
+      ASR_COMPUTE_TYPE: ${ASR_COMPUTE_TYPE:-float16}
+      ASR_LANGUAGE: ${ASR_LANGUAGE:-zh}
+      ASR_PRELOAD: ${ASR_PRELOAD:-true}
+      ASR_SIMPLIFIED_CHINESE: ${ASR_SIMPLIFIED_CHINESE:-true}
+      ASR_BEAM_SIZE: ${ASR_BEAM_SIZE:-5}
+      ASR_BEST_OF: ${ASR_BEST_OF:-5}
+      ASR_USE_CONTEXT: ${ASR_USE_CONTEXT:-false}
+      ASR_CONTEXT_CHARS: ${ASR_CONTEXT_CHARS:-60}
+      ASR_ENABLE_VAD: ${ASR_ENABLE_VAD:-true}
+      ASR_ENABLE_ENERGY_FILTER: ${ASR_ENABLE_ENERGY_FILTER:-true}
+      ASR_ENERGY_THRESHOLD_DBFS: ${ASR_ENERGY_THRESHOLD_DBFS:--42}
+      ASR_CONDITION_ON_PREVIOUS_TEXT: ${ASR_CONDITION_ON_PREVIOUS_TEXT:-false}
+      ASR_REPETITION_PENALTY: ${ASR_REPETITION_PENALTY:-1.05}
+      ASR_NO_REPEAT_NGRAM_SIZE: ${ASR_NO_REPEAT_NGRAM_SIZE:-3}
+      ASR_COMPRESSION_RATIO_THRESHOLD: ${ASR_COMPRESSION_RATIO_THRESHOLD:-2.2}
+      ASR_LOG_PROB_THRESHOLD: ${ASR_LOG_PROB_THRESHOLD:--1.0}
+      ASR_NO_SPEECH_THRESHOLD: ${ASR_NO_SPEECH_THRESHOLD:-0.6}
+      ASR_SKIP_NO_SPEECH_PROB: ${ASR_SKIP_NO_SPEECH_PROB:-0.65}
+      ASR_SKIP_AVG_LOGPROB_BELOW: ${ASR_SKIP_AVG_LOGPROB_BELOW:--0.85}
+      ASR_HALLUCINATION_SILENCE_THRESHOLD: ${ASR_HALLUCINATION_SILENCE_THRESHOLD:-1.0}
+      ASR_FILTER_REPETITION: ${ASR_FILTER_REPETITION:-true}
+      ASR_HALLUCINATION_PATTERNS: ${ASR_HALLUCINATION_PATTERNS:-请不吝点赞|点赞订阅|订阅转发|打赏支持|感谢观看|请逐字准确转写真实语音|不要总结|不要重复无声内容}
+      ASR_INITIAL_PROMPT: ${ASR_INITIAL_PROMPT:-普通话中文音频，输出简体中文字幕。}
+      ASR_HOTWORDS: ${ASR_HOTWORDS:-}
+      ASR_MAX_HOTWORDS: ${ASR_MAX_HOTWORDS:-120}
+      ASR_SUBTITLE_SKIP_NO_SPEECH_PROB: ${ASR_SUBTITLE_SKIP_NO_SPEECH_PROB:-0.88}
+      ASR_SUBTITLE_SKIP_AVG_LOGPROB_BELOW: ${ASR_SUBTITLE_SKIP_AVG_LOGPROB_BELOW:--1.20}
+      ASR_VAD_MIN_SILENCE_MS: ${ASR_VAD_MIN_SILENCE_MS:-300}
+    volumes:
+      - ./data:/data
+      - ./models:/models
+      - ./videos:/videos
+      - ./:/workspace:ro
+    ports:
+      - "8001:8000"
+    restart: unless-stopped
+
+  api:
+    build:
+      context: ./services/api
+    container_name: streamsense-api
+    depends_on:
+      topic-init:
+        condition: service_completed_successfully
+      redis:
+        condition: service_started
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      TRANSCRIPT_TOPIC: ${TRANSCRIPT_TOPIC:-transcription-result}
+      KEYWORD_TOPIC: ${KEYWORD_TOPIC:-keyword-event}
+      HOTWORD_UPDATE_TOPIC: ${HOTWORD_UPDATE_TOPIC:-streamsense.hotword.updates}
+      REDIS_URL: redis://redis:6379/0
+      CUSTOM_KEYWORD_FILE: /config/custom_keywords.txt
+      ASR_CORRECTION_FILE: /config/asr_corrections.txt
+      RESULT_DIR: /data/results
+      TOPIC_SHIFT_THRESHOLD: "0.35"
+      HOTWORD_AUTO_DISCOVERY_ENABLED: ${HOTWORD_AUTO_DISCOVERY_ENABLED:-true}
+      HOTWORD_DISCOVERY_TOP_K: ${HOTWORD_DISCOVERY_TOP_K:-30}
+      HOTWORD_AUTO_ADD_MIN_COUNT: ${HOTWORD_AUTO_ADD_MIN_COUNT:-5}
+      HOTWORD_MAX_WORDS: ${HOTWORD_MAX_WORDS:-120}
+      HOTWORD_MIN_TRANSCRIPT_LOGPROB: ${HOTWORD_MIN_TRANSCRIPT_LOGPROB:--0.55}
+      HOTWORD_USE_STATIC_HINTS: ${HOTWORD_USE_STATIC_HINTS:-false}
+      SENTENCE_BUFFER_ENABLED: ${SENTENCE_BUFFER_ENABLED:-true}
+      SENTENCE_MAX_CHARS: ${SENTENCE_MAX_CHARS:-110}
+      SENTENCE_FLUSH_GAP_MS: ${SENTENCE_FLUSH_GAP_MS:-1500}
+      SENTENCE_STALE_FLUSH_MS: ${SENTENCE_STALE_FLUSH_MS:-3000}
+      SENTENCE_ADD_PERIOD_ON_FLUSH: ${SENTENCE_ADD_PERIOD_ON_FLUSH:-true}
+      SENTENCE_DROP_INCOMPLETE_ON_FLUSH: ${SENTENCE_DROP_INCOMPLETE_ON_FLUSH:-false}
+      SENTENCE_MARK_INCOMPLETE_ON_FLUSH: ${SENTENCE_MARK_INCOMPLETE_ON_FLUSH:-true}
+      SENTENCE_INCOMPLETE_ENDINGS: ${SENTENCE_INCOMPLETE_ENDINGS:-因为|所以|但是|然而|并且|以及|如果|虽然|或者|并不是|换句话说|比如|例如|首先|其次}
+    volumes:
+      - ./config:/config
+      - ./data:/data
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
+
+  flink-jobmanager:
+    build:
+      context: ./flink
+    container_name: streamsense-flink-jobmanager
+    command: jobmanager
+    ports:
+      - "8081:8081"
+    environment:
+      FLINK_PROPERTIES: |
+        jobmanager.rpc.address: flink-jobmanager
+        parallelism.default: 1
+        taskmanager.numberOfTaskSlots: 2
+    volumes:
+      - ./data:/data
+
+  flink-taskmanager:
+    build:
+      context: ./flink
+    container_name: streamsense-flink-taskmanager
+    depends_on:
+      - flink-jobmanager
+    command: taskmanager
+    environment:
+      FLINK_PROPERTIES: |
+        jobmanager.rpc.address: flink-jobmanager
+        parallelism.default: 1
+        taskmanager.numberOfTaskSlots: 2
+    volumes:
+      - ./data:/data
+
+  flink-job-submitter:
+    build:
+      context: ./flink
+    container_name: streamsense-flink-job-submitter
+    depends_on:
+      topic-init:
+        condition: service_completed_successfully
+      asr:
+        condition: service_started
+      flink-jobmanager:
+        condition: service_started
+      flink-taskmanager:
+        condition: service_started
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      AUDIO_TOPIC: ${AUDIO_TOPIC:-audio-segment}
+      TRANSCRIPT_TOPIC: ${TRANSCRIPT_TOPIC:-transcription-result}
+      ASR_URL: http://asr:8000
+      ASR_TIMEOUT_SECONDS: 120
+    volumes:
+      - ./data:/data
+    command: >
+      bash -lc "bash /opt/flink/usrlib/wait-for.sh kafka 9092 &&
+      bash /opt/flink/usrlib/wait-for.sh asr 8000 &&
+      bash /opt/flink/usrlib/wait-for.sh flink-jobmanager 8081 &&
+      flink run -m flink-jobmanager:8081 -py /opt/flink/usrlib/transcription_job.py"
+    restart: "no"
+
+  ingest:
+    build:
+      context: ./services/ingest
+    container_name: streamsense-ingest
+    depends_on:
+      topic-init:
+        condition: service_completed_successfully
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      AUDIO_TOPIC: ${AUDIO_TOPIC:-audio-segment}
+      VIDEO_SOURCE: ${VIDEO_SOURCE:-/videos/input.mp4}
+      STREAM_ID: ${STREAM_ID:-demo-video}
+      SEGMENT_SECONDS: ${SEGMENT_SECONDS:-6}
+      INGEST_SEGMENT_MODE: ${INGEST_SEGMENT_MODE:-vad}
+      INGEST_VAD_FRAME_MS: ${INGEST_VAD_FRAME_MS:-30}
+      INGEST_VAD_AGGRESSIVENESS: ${INGEST_VAD_AGGRESSIVENESS:-2}
+      INGEST_VAD_MIN_CHUNK_MS: ${INGEST_VAD_MIN_CHUNK_MS:-500}
+      INGEST_VAD_TARGET_CHUNK_MS: ${INGEST_VAD_TARGET_CHUNK_MS:-3000}
+      INGEST_VAD_HARD_MAX_CHUNK_MS: ${INGEST_VAD_HARD_MAX_CHUNK_MS:-4500}
+      INGEST_VAD_MAX_SILENCE_MS: ${INGEST_VAD_MAX_SILENCE_MS:-1400}
+      INGEST_VAD_SHORT_BOUNDARY_MS: ${INGEST_VAD_SHORT_BOUNDARY_MS:-240}
+      INGEST_VAD_PADDING_MS: ${INGEST_VAD_PADDING_MS:-300}
+      OUTPUT_DIR: /data/audio
+      REALTIME_FILE_INPUT: "true"
+      WAIT_FOR_SOURCE: "true"
+    volumes:
+      - ./videos:/videos
+      - ./data:/data
+    restart: "no"
+
+volumes:
+  redis-data:
