@@ -1,12 +1,14 @@
-import type { LogLine, ServiceStatus } from "../types";
+import type { BackendHealth, ComposeContainer, LogLine, ServiceStatus } from "../types";
 
 interface ServiceMonitorPanelProps {
   services: ServiceStatus[];
   logs: LogLine[];
   compact?: boolean;
+  compose?: ComposeContainer[];
+  backendHealth?: BackendHealth | null;
 }
 
-export function ServiceMonitorPanel({ services, logs, compact = false }: ServiceMonitorPanelProps) {
+export function ServiceMonitorPanel({ services, logs, compact = false, compose = [], backendHealth }: ServiceMonitorPanelProps) {
   return (
     <section className={`service-monitor ${compact ? "is-compact" : ""}`}>
       <div className="monitor-head">
@@ -15,6 +17,23 @@ export function ServiceMonitorPanel({ services, logs, compact = false }: Service
       </div>
 
       <div className="service-gauge-grid">
+        {compose.length > 0 && (
+          <article className="service-gauge gauge-busy">
+            <div className="gauge-face">
+              <span className="lamp lamp-busy" />
+              <strong>Docker</strong>
+              <small>{compose.length} containers</small>
+            </div>
+            <dl>
+              {compose.slice(0, 6).map((container) => (
+                <div key={`${container.name}-${container.service}`}>
+                  <dt>{container.service || container.name}</dt>
+                  <dd>{container.state || container.status || "unknown"}</dd>
+                </div>
+              ))}
+            </dl>
+          </article>
+        )}
         {services.map((service) => (
           <article className={`service-gauge gauge-${service.state}`} key={service.name}>
             <div className="gauge-face">
@@ -49,7 +68,9 @@ export function ServiceMonitorPanel({ services, logs, compact = false }: Service
           <i />
           <span>keyword-event</span>
           <i />
-          <span>results</span>
+          <span>hotword updates</span>
+          <i />
+          <span>{backendHealth ? `health ${backendHealth.api}/${backendHealth.asr}/${backendHealth.flink}` : "results"}</span>
         </div>
       </div>
 

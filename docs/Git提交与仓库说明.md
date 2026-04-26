@@ -32,6 +32,9 @@
 - 根目录 `input*.mp4`
 - `data/audio/` 里的切片音频
 - `data/results/` 里的字幕、报告、JSONL、批量结果
+- `desktop-ui/dist/`、`desktop-ui/dist-electron/` 前端构建产物
+- `desktop-ui/release/`、`desktop-ui/release-*`、`desktop-ui/release-fresh/` Electron 打包产物
+- `.claude/`、`.vscode/`、`.idea/` 等本机工具配置
 - 各类缓存和日志文件
 
 原因很直接：
@@ -63,6 +66,8 @@ git commit -m "chore: initialize project repository"
 - `videos/` 里的视频文件
 - `data/results/` 里的字幕和报告
 - `data/audio/` 里的音频切片
+- `desktop-ui/release/` 或 `desktop-ui/release-fresh/` 里的 exe、unpacked 文件
+- `.claude/` 这类本机配置目录
 
 ## 5. 推荐的日常提交流程
 

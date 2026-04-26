@@ -22,7 +22,9 @@
   --panel-dark: #24282a;
   --panel-sunken: #141719;
   --engraved-text: #25292b;
+  --lcd-bg: #041006;
   --paper: #f3ead7;
+  --paper-bg: #f3ead7;
   --paper-edge: #c7b994;
   --success-glass: #53c96f;
   --warning-glass: #f1c24d;
@@ -30,7 +32,8 @@
   --cyan-glass: #58d2d0;
   --shadow-heavy: 0 22px 50px rgba(0, 0, 0, 0.62), 0 2px 0 rgba(255, 255, 255, 0.22) inset;
   --shadow-inset: inset 0 2px 5px rgba(255, 255, 255, 0.28), inset 0 -6px 14px rgba(0, 0, 0, 0.45);
-  --radius-panel: 18px;
-  --radius-card: 8px;
+  --radius-panel: 14px;
+  --radius-card: 12px;
+  --radius-control: 10px;
   --font-ui: "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
 }

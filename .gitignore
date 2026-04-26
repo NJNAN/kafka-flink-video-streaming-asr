@@ -26,6 +26,7 @@ env/
 .vscode/
 .idea/
 *.code-workspace
+.claude/
 
 # ------------------------------
 # OS files
@@ -39,6 +40,8 @@ Thumbs.db
 .env
 .env.*
 !.env.example
+desktop-ui/.env.local
+desktop-ui/.env.*.local
 
 # ------------------------------
 # Logs
@@ -46,6 +49,8 @@ Thumbs.db
 *.log
 *.out
 *.pid
+/logs/
+logs/*
 
 # ------------------------------
 # Node / frontend local outputs
@@ -53,9 +58,18 @@ Thumbs.db
 node_modules/
 /desktop-ui/node_modules/
 /desktop-ui/dist/
+/desktop-ui/dist-electron/
 /desktop-ui/output/
+/desktop-ui/release/
+/desktop-ui/release-*/
 /desktop-ui/vite-dev.*
 /desktop-ui/*.tsbuildinfo
+/desktop-ui/.vite/
+/desktop-ui/.cache/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
 
 # ------------------------------
 # Local media sources
@@ -81,3 +95,10 @@ node_modules/
 # ------------------------------
 /models/*
 !/models/.gitkeep
+
+# ------------------------------
+# Test / report caches
+# ------------------------------
+playwright-report/
+test-results/
+coverage/

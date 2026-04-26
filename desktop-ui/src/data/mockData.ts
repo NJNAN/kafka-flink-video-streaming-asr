@@ -70,7 +70,8 @@ export const mockSnapshot: WorkbenchSnapshot = {
       elapsed: "03:48",
       duration: "05:13",
       mode: "高质量",
-      thumbnailTone: "teal"
+      thumbnailTone: "teal",
+      reportPath: "data/results/batch/input10/input10_report.json"
     },
     {
       id: "task-batch",
@@ -81,7 +82,8 @@ export const mockSnapshot: WorkbenchSnapshot = {
       elapsed: "02:12",
       duration: "04:36",
       mode: "标准质量",
-      thumbnailTone: "amber"
+      thumbnailTone: "amber",
+      reportPath: "data/results/batch/input8/input8_report.json"
     },
     {
       id: "task-live",

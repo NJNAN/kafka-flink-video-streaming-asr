@@ -38,7 +38,7 @@ export function TaskSidebar({ tasks, selectedTaskId, onTaskSelect }: TaskSidebar
               <span className="task-source">{task.source}</span>
               <span className="task-meta">
                 <span className={`status-pill status-${task.status}`}>{stateLabel[task.status]}</span>
-                <span>{task.elapsed} / {task.duration}</span>
+                <span>{task.mode} · {task.elapsed} / {task.duration}</span>
               </span>
               <span className="progress-groove" aria-label={`进度 ${task.progress}%`}>
                 <span style={{ width: `${task.progress}%` }} />

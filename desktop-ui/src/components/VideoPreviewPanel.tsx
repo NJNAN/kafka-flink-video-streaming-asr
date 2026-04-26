@@ -1,8 +1,13 @@
 import { useState } from "react";
-import type { TaskItem } from "../types";
+import type { SelectedVideo, TaskItem } from "../types";
 
 interface VideoPreviewPanelProps {
   selectedTask: TaskItem;
+  selectedVideo: SelectedVideo | null;
+  desktopAvailable: boolean;
+  onSelectVideo: () => void;
+  onStartVideoTask: (mode: TaskItem["mode"], copyToWorkspace: boolean) => void;
+  onOpenVideosFolder: () => void;
 }
 
 const modes = [
@@ -41,9 +46,31 @@ const advancedSettings = [
   ["启用补漏", "true"]
 ];
 
-export function VideoPreviewPanel({ selectedTask }: VideoPreviewPanelProps) {
+function formatBytes(bytes: number) {
+  if (!bytes) {
+    return "-";
+  }
+  const units = ["B", "KB", "MB", "GB"];
+  let value = bytes;
+  let unit = 0;
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024;
+    unit += 1;
+  }
+  return `${value.toFixed(unit === 0 ? 0 : 1)} ${units[unit]}`;
+}
+
+export function VideoPreviewPanel({
+  selectedTask,
+  selectedVideo,
+  desktopAvailable,
+  onSelectVideo,
+  onStartVideoTask,
+  onOpenVideosFolder
+}: VideoPreviewPanelProps) {
   const [selectedMode, setSelectedMode] = useState(selectedTask.mode);
   const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [copyToWorkspace, setCopyToWorkspace] = useState(true);
 
   return (
     <section className="video-workbench">
@@ -65,10 +92,14 @@ export function VideoPreviewPanel({ selectedTask }: VideoPreviewPanelProps) {
           <input value="rtsp://camera-01.local:554/stream1" readOnly />
         </label>
 
-        <div className="drop-slot" role="button" tabIndex={0}>
+        <div className="drop-slot" role="button" tabIndex={0} onClick={onSelectVideo} onKeyDown={(event) => event.key === "Enter" && onSelectVideo()}>
           <span className="paper-stack" />
-          <strong>拖入视频</strong>
-          <small>支持 mp4 / mkv / mov / avi，也可使用真实 RTSP/HTTP 视频流</small>
+          <strong>{selectedVideo ? selectedVideo.name : "选择 / 拖入视频"}</strong>
+          <small>
+            {selectedVideo
+              ? `${selectedVideo.extension} · ${formatBytes(selectedVideo.sizeBytes)} · ${selectedVideo.path}`
+              : "支持 mp4 / mkv / mov / avi，也可使用真实 RTSP/HTTP 视频流"}
+          </small>
         </div>
       </div>
 
@@ -101,10 +132,18 @@ export function VideoPreviewPanel({ selectedTask }: VideoPreviewPanelProps) {
       </div>
 
       <div className="start-strip">
-        <button className="skeuo-button primary" type="button">启动任务</button>
+        <button className="skeuo-button" type="button" disabled={!desktopAvailable} onClick={onSelectVideo}>选择视频</button>
+        <button className="skeuo-button primary" type="button" disabled={!desktopAvailable} onClick={() => onStartVideoTask(selectedMode, copyToWorkspace)}>
+          创建并启动任务
+        </button>
         <button className="skeuo-button" type="button" onClick={() => setAdvancedOpen((value) => !value)}>
           {advancedOpen ? "收起高级设置" : "展开高级设置"}
         </button>
+        <button className="skeuo-button" type="button" disabled={!desktopAvailable} onClick={onOpenVideosFolder}>打开 videos</button>
+        <label className="copy-toggle">
+          <input type="checkbox" checked={copyToWorkspace} onChange={(event) => setCopyToWorkspace(event.target.checked)} />
+          <span>复制到 videos 目录</span>
+        </label>
       </div>
 
       {advancedOpen && (

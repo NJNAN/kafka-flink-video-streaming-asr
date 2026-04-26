@@ -13,7 +13,8 @@ import jieba.analyse
 import jieba.posseg as pseg
 import redis.asyncio as redis
 from aiokafka import AIOKafkaConsumer, AIOKafkaProducer
-from fastapi import FastAPI, Query
+from fastapi import FastAPI, HTTPException, Query
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -111,7 +112,16 @@ HOTWORD_STOPWORDS = {
     "tv",
 }
 
+CORS_ORIGINS = [origin.strip() for origin in os.getenv("STREAMSENSE_CORS_ORIGINS", "*").split(",") if origin.strip()]
+
 app = FastAPI(title="StreamSense API")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=CORS_ORIGINS,
+    allow_credentials=False,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
 recent_transcripts: deque[dict[str, Any]] = deque(maxlen=500)
@@ -471,6 +481,72 @@ def append_jsonl(path: Path, data: dict[str, Any]) -> None:
         file.write(json.dumps(data, ensure_ascii=False) + "\n")
 
 
+def result_dir_root() -> Path:
+    return RESULT_DIR.resolve()
+
+
+def safe_result_path(path_value: str) -> Path:
+    """只允许读取 RESULT_DIR 内部文件，避免任意路径读取。"""
+    if not path_value:
+        raise HTTPException(status_code=400, detail="path is required")
+
+    raw = Path(path_value)
+    if raw.is_absolute():
+        candidate = raw.resolve()
+    else:
+        parts = list(raw.parts)
+        if len(parts) >= 2 and parts[0] == "data" and parts[1] == "results":
+            parts = parts[2:]
+        candidate = (RESULT_DIR / Path(*parts)).resolve()
+
+    root = result_dir_root()
+    if candidate != root and root not in candidate.parents:
+        raise HTTPException(status_code=403, detail="path must stay inside RESULT_DIR")
+    if not candidate.exists():
+        raise HTTPException(status_code=404, detail="result file not found")
+    return candidate
+
+
+def relative_result_path(path_value: Path) -> str:
+    try:
+        return str(path_value.resolve().relative_to(result_dir_root())).replace("\\", "/")
+    except ValueError:
+        return path_value.name
+
+
+def read_json_file(path_value: Path) -> dict[str, Any] | list[Any] | None:
+    try:
+        return json.loads(path_value.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+
+
+def human_size(size: int) -> str:
+    value = float(size)
+    units = ["B", "KB", "MB", "GB"]
+    unit = 0
+    while value >= 1024 and unit < len(units) - 1:
+        value /= 1024
+        unit += 1
+    return f"{value:.1f} {units[unit]}" if unit else f"{int(value)} B"
+
+
+def tail_jsonl(path_value: Path, limit: int) -> list[dict[str, Any]]:
+    if not path_value.exists():
+        return []
+    try:
+        lines = path_value.read_text(encoding="utf-8").splitlines()[-limit:]
+    except Exception:
+        return []
+    items = []
+    for line in lines:
+        try:
+            items.append(json.loads(line))
+        except Exception:
+            continue
+    return items
+
+
 def write_dynamic_hotword_state(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -804,6 +880,110 @@ async def health() -> dict[str, Any]:
 @app.get("/api/status")
 async def api_status() -> dict[str, Any]:
     return status
+
+
+@app.get("/api/results")
+async def results() -> dict[str, Any]:
+    RESULT_DIR.mkdir(parents=True, exist_ok=True)
+    allowed_suffixes = {".srt", ".vtt", ".txt", ".json", ".jsonl", ".md"}
+    files: list[dict[str, Any]] = []
+    reports: list[tuple[float, Path, Any]] = []
+
+    for path_value in RESULT_DIR.rglob("*"):
+        if not path_value.is_file() or path_value.suffix.lower() not in allowed_suffixes:
+            continue
+        try:
+            item_stat = path_value.stat()
+        except OSError:
+            continue
+        rel_path = relative_result_path(path_value)
+        files.append(
+            {
+                "name": path_value.name,
+                "path": rel_path,
+                "size": human_size(item_stat.st_size),
+                "size_bytes": item_stat.st_size,
+                "modified_at_ms": int(item_stat.st_mtime * 1000),
+            }
+        )
+        if path_value.name.endswith("_report.json") or path_value.name == "report.json":
+            report = read_json_file(path_value)
+            if report is not None:
+                reports.append((item_stat.st_mtime, path_value, report))
+
+    latest_report = None
+    latest_report_path = ""
+    if reports:
+        _, report_path, latest_report = sorted(reports, key=lambda item: item[0], reverse=True)[0]
+        latest_report_path = relative_result_path(report_path)
+
+    tasks_path = RESULT_DIR / "tasks.json"
+    tasks = read_json_file(tasks_path)
+    if not isinstance(tasks, list):
+        tasks = []
+
+    files.sort(key=lambda item: int(item["modified_at_ms"]), reverse=True)
+    return {
+        "status": "ok",
+        "result_dir": str(RESULT_DIR),
+        "files": files[:500],
+        "latest_report": latest_report,
+        "latest_report_path": latest_report_path,
+        "tasks": tasks,
+    }
+
+
+@app.get("/api/results/report")
+async def result_report(path: str) -> dict[str, Any] | list[Any]:
+    path_value = safe_result_path(path)
+    if path_value.suffix.lower() != ".json":
+        raise HTTPException(status_code=400, detail="report path must be a json file")
+    data = read_json_file(path_value)
+    if data is None:
+        raise HTTPException(status_code=400, detail="report json parse failed")
+    return data
+
+
+@app.get("/api/results/file")
+async def result_file(path: str) -> FileResponse:
+    path_value = safe_result_path(path)
+    if not path_value.is_file():
+        raise HTTPException(status_code=400, detail="path is not a file")
+    return FileResponse(path_value)
+
+
+@app.get("/api/logs")
+async def logs(limit: int = Query(default=300, ge=1, le=1000)) -> list[dict[str, Any]]:
+    transcript_tail = tail_jsonl(RESULT_DIR / "transcripts.jsonl", limit)
+    keyword_tail = tail_jsonl(RESULT_DIR / "keyword_events.jsonl", limit)
+    rows: list[dict[str, Any]] = []
+
+    for item in transcript_tail[-limit:]:
+        rows.append(
+            {
+                "id": str(item.get("segment_id", uuid.uuid4().hex)),
+                "time": time.strftime("%H:%M:%S", time.localtime(int(item.get("audio_created_at_ms", now_ms())) / 1000)),
+                "level": "OK",
+                "source": "transcript",
+                "message": str(item.get("text", ""))[:220],
+            }
+        )
+
+    for item in keyword_tail[-limit:]:
+        keywords = item.get("keywords", [])
+        words = [str(keyword.get("word", "")) for keyword in keywords if isinstance(keyword, dict)]
+        rows.append(
+            {
+                "id": str(item.get("event_id", uuid.uuid4().hex)),
+                "time": time.strftime("%H:%M:%S", time.localtime(int(item.get("created_at_ms", now_ms())) / 1000)),
+                "level": "INFO",
+                "source": "keyword",
+                "message": "关键词：" + " / ".join([word for word in words if word]),
+            }
+        )
+
+    rows.sort(key=lambda item: item["time"], reverse=True)
+    return rows[:limit]
 
 
 @app.get("/api/transcripts")

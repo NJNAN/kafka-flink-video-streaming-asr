@@ -1,12 +1,27 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 const modelOptions = ["small", "base", "medium", "large-v3"];
 const hotwords = ["Kafka", "Flink", "字幕补漏", "语音识别", "流处理"];
 const corrections = ["卡夫卡 => Kafka", "弗林克 => Flink", "微斯珀 => Whisper"];
 
 export function SettingsPanel() {
-  const [recoveryEnabled, setRecoveryEnabled] = useState(true);
+  const [settings, setSettings] = useState(() => {
+    try {
+      return JSON.parse(window.localStorage.getItem("streamsense.desktop.settings") ?? "{}") as Record<string, string | boolean>;
+    } catch {
+      return {};
+    }
+  });
+  const [recoveryEnabled, setRecoveryEnabled] = useState(settings.recoveryEnabled !== false);
   const [hotwordInput, setHotwordInput] = useState("");
+
+  useEffect(() => {
+    window.localStorage.setItem("streamsense.desktop.settings", JSON.stringify({ ...settings, recoveryEnabled }));
+  }, [recoveryEnabled, settings]);
+
+  const setSetting = (key: string, value: string) => {
+    setSettings((current) => ({ ...current, [key]: value }));
+  };
 
   return (
     <section className="settings-panel">
@@ -20,7 +35,7 @@ export function SettingsPanel() {
           <legend>ASR 模型</legend>
           <label>
             <span>ASR_MODEL <em title="对应 faster-whisper 模型名称">?</em></span>
-            <select defaultValue="large-v3">
+            <select value={String(settings.model ?? "large-v3")} onChange={(event) => setSetting("model", event.target.value)}>
               {modelOptions.map((option) => (
                 <option key={option}>{option}</option>
               ))}
@@ -28,14 +43,14 @@ export function SettingsPanel() {
           </label>
           <label>
             <span>ASR_DEVICE <em title="cuda 适合 NVIDIA GPU，cpu 用于无显卡环境">?</em></span>
-            <select defaultValue="cuda">
+            <select value={String(settings.device ?? "cuda")} onChange={(event) => setSetting("device", event.target.value)}>
               <option>cuda</option>
               <option>cpu</option>
             </select>
           </label>
           <label>
             <span>ASR_COMPUTE_TYPE</span>
-            <select defaultValue="float16">
+            <select value={String(settings.computeType ?? "float16")} onChange={(event) => setSetting("computeType", event.target.value)}>
               <option>float16</option>
               <option>int8_float16</option>
               <option>int8</option>
@@ -45,10 +60,34 @@ export function SettingsPanel() {
 
         <fieldset>
           <legend>VAD 与字幕</legend>
-          <SliderRow label="VAD aggressive" min="0" max="3" defaultValue="2" />
-          <SliderRow label="切片目标长度 ms" min="1000" max="8000" defaultValue="3000" />
-          <SliderRow label="最长切片 ms" min="2000" max="12000" defaultValue="4500" />
-          <SliderRow label="字幕最大字符数" min="40" max="160" defaultValue="110" />
+          <SliderRow
+            label="VAD aggressive"
+            min="0"
+            max="3"
+            value={String(settings.vadAggressive ?? "2")}
+            onChange={(value) => setSetting("vadAggressive", value)}
+          />
+          <SliderRow
+            label="切片目标长度 ms"
+            min="1000"
+            max="8000"
+            value={String(settings.vadTargetChunkMs ?? "3000")}
+            onChange={(value) => setSetting("vadTargetChunkMs", value)}
+          />
+          <SliderRow
+            label="最长切片 ms"
+            min="2000"
+            max="12000"
+            value={String(settings.vadHardMaxChunkMs ?? "4500")}
+            onChange={(value) => setSetting("vadHardMaxChunkMs", value)}
+          />
+          <SliderRow
+            label="字幕最大字符数"
+            min="40"
+            max="160"
+            value={String(settings.subtitleMaxChars ?? "110")}
+            onChange={(value) => setSetting("subtitleMaxChars", value)}
+          />
           <div className="switch-row">
             <span>启用字幕补漏</span>
             <button
@@ -100,12 +139,24 @@ export function SettingsPanel() {
   );
 }
 
-function SliderRow({ label, min, max, defaultValue }: { label: string; min: string; max: string; defaultValue: string }) {
+function SliderRow({
+  label,
+  min,
+  max,
+  value,
+  onChange
+}: {
+  label: string;
+  min: string;
+  max: string;
+  value: string;
+  onChange: (value: string) => void;
+}) {
   return (
     <label className="slider-row">
       <span>{label} <em title="后续接入任务配置接口">?</em></span>
-      <input type="range" min={min} max={max} defaultValue={defaultValue} />
-      <output>{defaultValue}</output>
+      <input type="range" min={min} max={max} value={value} onChange={(event) => onChange(event.target.value)} />
+      <output>{value}</output>
     </label>
   );
 }

@@ -1,10 +1,19 @@
-import type { ServiceStatus } from "../types";
+import type { DataSourceState, ServiceStatus } from "../types";
 
 interface TopStatusBarProps {
   services: ServiceStatus[];
+  dataSource: DataSourceState;
+  desktopAvailable: boolean;
 }
 
-export function TopStatusBar({ services }: TopStatusBarProps) {
+const dataSourceText: Record<DataSourceState, string> = {
+  "backend-connected": "Backend Connected",
+  "backend-starting": "Backend Starting",
+  "backend-error": "Backend Error",
+  mock: "Mock Mode"
+};
+
+export function TopStatusBar({ services, dataSource, desktopAvailable }: TopStatusBarProps) {
   return (
     <header className="top-status-bar">
       <div className="brand-plaque">
@@ -16,6 +25,10 @@ export function TopStatusBar({ services }: TopStatusBarProps) {
       </div>
 
       <div className="service-lights" aria-label="服务状态">
+        <div className={`data-source-pill data-source-${dataSource}`}>
+          <span>{dataSourceText[dataSource]}</span>
+          <small>{desktopAvailable ? "Electron" : "Web"}</small>
+        </div>
         {services.map((service) => (
           <div className="service-light" key={service.name} title={`${service.name}: ${service.headline}`}>
             <span className={`lamp lamp-${service.state}`} />

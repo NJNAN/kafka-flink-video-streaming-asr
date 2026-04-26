@@ -1,9 +1,15 @@
 import type { ExportFile, QualityMetric, QualityReport, TimelineData } from "../types";
+import { SubtitleEditorPanel } from "./SubtitleEditorPanel";
 
 interface ResultExportPanelProps {
   quality: QualityReport;
   exports: ExportFile[];
   timeline: TimelineData;
+  taskId?: string;
+  onOpenResultsFolder?: () => void;
+  onCopyPath?: (path: string) => void;
+  onExportZip?: () => void;
+  onSaveEditedSubtitles?: (segments: Array<{ start: number; end: number; text: string }>) => void;
 }
 
 const stateClass: Record<QualityMetric["state"], string> = {
@@ -12,7 +18,16 @@ const stateClass: Record<QualityMetric["state"], string> = {
   fail: "result-fail"
 };
 
-export function ResultExportPanel({ quality, exports, timeline }: ResultExportPanelProps) {
+export function ResultExportPanel({
+  quality,
+  exports,
+  timeline,
+  taskId,
+  onOpenResultsFolder,
+  onCopyPath,
+  onExportZip,
+  onSaveEditedSubtitles
+}: ResultExportPanelProps) {
   return (
     <section className="result-center">
       <div className="file-cabinet-head">
@@ -52,14 +67,21 @@ export function ResultExportPanel({ quality, exports, timeline }: ResultExportPa
             </div>
             <div className="document-actions">
               <button type="button">预览</button>
-              <button type="button">打开目录</button>
-              <button type="button">复制路径</button>
+              <button type="button" onClick={onOpenResultsFolder}>打开目录</button>
+              <button type="button" onClick={() => onCopyPath?.(file.path)}>复制路径</button>
             </div>
           </article>
         ))}
       </div>
 
-      <button className="skeuo-button primary export-all" type="button">导出压缩包</button>
+      <div className="result-actions">
+        <button className="skeuo-button primary export-all" type="button" onClick={onExportZip}>导出 ZIP</button>
+        <button className="skeuo-button" type="button" onClick={onOpenResultsFolder}>打开结果目录</button>
+        <button className="skeuo-button" type="button">重新生成字幕</button>
+        <button className="skeuo-button" type="button">打开原始视频</button>
+      </div>
+
+      <SubtitleEditorPanel taskId={taskId} subtitles={timeline.subtitleSegments} onExportEdited={onSaveEditedSubtitles} />
     </section>
   );
 }

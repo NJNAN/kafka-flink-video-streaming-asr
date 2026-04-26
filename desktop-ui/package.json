@@ -1,22 +1,97 @@
 {
   "name": "streamsense-desktop-ui",
+  "productName": "StreamSense",
+  "description": "StreamSense Studio desktop launcher and workbench",
+  "author": "StreamSense",
   "private": true,
   "version": "0.1.0",
   "type": "module",
+  "main": "dist-electron/main.js",
   "scripts": {
     "dev": "vite --host 0.0.0.0",
     "build": "tsc --noEmit && vite build",
-    "preview": "vite preview --host 0.0.0.0"
+    "preview": "vite preview --host 0.0.0.0",
+    "electron:dev": "concurrently -k \"npm:dev\" \"npm:electron:dev:wait\"",
+    "electron:dev:wait": "wait-on http://localhost:5173 && npm run electron:build && cross-env ELECTRON_RUN_AS_NODE= VITE_DEV_SERVER_URL=http://localhost:5173 electron .",
+    "electron:build": "tsc -p electron/tsconfig.json",
+    "dist": "npm run build && npm run electron:build && electron-builder --win --x64"
   },
   "dependencies": {
     "react": "^19.2.0",
     "react-dom": "^19.2.0"
   },
   "devDependencies": {
+    "@types/node": "^24.10.1",
     "@types/react": "^19.2.7",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^5.1.1",
+    "concurrently": "^9.2.1",
+    "cross-env": "^10.1.0",
+    "electron": "^39.2.6",
+    "electron-builder": "^26.0.12",
     "typescript": "^5.9.3",
-    "vite": "^7.2.4"
+    "vite": "^7.2.4",
+    "wait-on": "^9.0.3"
+  },
+  "build": {
+    "appId": "com.streamsense.studio",
+    "productName": "StreamSense",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "dist-electron/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "../docker-compose.yml",
+        "to": "project/docker-compose.yml"
+      },
+      {
+        "from": "../tools",
+        "to": "project/tools"
+      },
+      {
+        "from": "../config",
+        "to": "project/config"
+      },
+      {
+        "from": "../services",
+        "to": "project/services"
+      },
+      {
+        "from": "../flink",
+        "to": "project/flink"
+      },
+      {
+        "from": "../.env.example",
+        "to": "project/.env.example"
+      },
+      {
+        "from": "../README.md",
+        "to": "project/README.md"
+      }
+    ],
+    "asar": true,
+    "win": {
+      "signAndEditExecutable": false,
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "executableName": "StreamSense"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "shortcutName": "StreamSense"
+    }
   }
 }

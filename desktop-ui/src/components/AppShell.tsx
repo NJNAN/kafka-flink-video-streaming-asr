@@ -1,3 +1,4 @@
+import { DesktopLauncherPanel } from "./DesktopLauncherPanel";
 import { LiveTranscriptPanel } from "./LiveTranscriptPanel";
 import { PipelineStepper } from "./PipelineStepper";
 import { QualityReportPanel } from "./QualityReportPanel";
@@ -8,16 +9,50 @@ import { SubtitleTimeline } from "./SubtitleTimeline";
 import { TaskSidebar } from "./TaskSidebar";
 import { TopStatusBar } from "./TopStatusBar";
 import { VideoPreviewPanel } from "./VideoPreviewPanel";
-import type { AppTab, SubtitleSegment, TaskItem, WorkbenchSnapshot } from "../types";
+import type {
+  AppTab,
+  BackendHealth,
+  ComposeContainer,
+  DataSourceState,
+  EnvironmentCheck,
+  SelectedVideo,
+  SubtitleSegment,
+  TaskItem,
+  WorkbenchSnapshot
+} from "../types";
 
 interface AppShellProps {
   snapshot: WorkbenchSnapshot;
   activeTab: AppTab;
   selectedTask: TaskItem;
   selectedSubtitle: SubtitleSegment | null;
+  dataSource: DataSourceState;
+  desktopAvailable: boolean;
+  environment: EnvironmentCheck | null;
+  compose: ComposeContainer[];
+  backendHealth: BackendHealth | null;
+  desktopLogs: string[];
+  desktopBusy: boolean;
+  desktopMessage: string;
+  selectedVideo: SelectedVideo | null;
   onTabChange: (tab: AppTab) => void;
   onTaskSelect: (taskId: string) => void;
   onSubtitleSelect: (subtitleId: string) => void;
+  onCheckEnvironment: () => void;
+  onStartServices: () => void;
+  onStopServices: () => void;
+  onRestartServices: () => void;
+  onClearLogs: () => void;
+  onCopyLogs: () => void;
+  onExportLogs: () => void;
+  onOpenProject: () => void;
+  onOpenResults: () => void;
+  onOpenVideos: () => void;
+  onSelectVideo: () => void;
+  onStartVideoTask: (mode: TaskItem["mode"], copyToWorkspace: boolean) => void;
+  onExportZip: () => void;
+  onCopyPath: (path: string) => void;
+  onSaveEditedSubtitles: (segments: Array<{ start: number; end: number; text: string }>) => void;
 }
 
 const tabs: Array<{ id: AppTab; label: string }> = [
@@ -32,14 +67,38 @@ export function AppShell({
   activeTab,
   selectedTask,
   selectedSubtitle,
+  dataSource,
+  desktopAvailable,
+  environment,
+  compose,
+  backendHealth,
+  desktopLogs,
+  desktopBusy,
+  desktopMessage,
+  selectedVideo,
   onTabChange,
   onTaskSelect,
-  onSubtitleSelect
+  onSubtitleSelect,
+  onCheckEnvironment,
+  onStartServices,
+  onStopServices,
+  onRestartServices,
+  onClearLogs,
+  onCopyLogs,
+  onExportLogs,
+  onOpenProject,
+  onOpenResults,
+  onOpenVideos,
+  onSelectVideo,
+  onStartVideoTask,
+  onExportZip,
+  onCopyPath,
+  onSaveEditedSubtitles
 }: AppShellProps) {
   return (
     <div className="app-leather">
       <div className="device-shell">
-        <TopStatusBar services={snapshot.services} />
+        <TopStatusBar services={snapshot.services} dataSource={dataSource} desktopAvailable={desktopAvailable} />
 
         <nav className="metal-tabbar" aria-label="主页面">
           {tabs.map((tab) => (
@@ -60,7 +119,33 @@ export function AppShell({
           <main className={`main-bay main-bay-${activeTab}`}>
             {activeTab === "workbench" && (
               <>
-                <VideoPreviewPanel selectedTask={selectedTask} />
+                <DesktopLauncherPanel
+                  desktopAvailable={desktopAvailable}
+                  environment={environment}
+                  compose={compose}
+                  backendHealth={backendHealth}
+                  logs={desktopLogs}
+                  busy={desktopBusy}
+                  message={desktopMessage}
+                  onCheckEnvironment={onCheckEnvironment}
+                  onStartServices={onStartServices}
+                  onStopServices={onStopServices}
+                  onRestartServices={onRestartServices}
+                  onClearLogs={onClearLogs}
+                  onCopyLogs={onCopyLogs}
+                  onExportLogs={onExportLogs}
+                  onOpenProject={onOpenProject}
+                  onOpenResults={onOpenResults}
+                  onOpenVideos={onOpenVideos}
+                />
+                <VideoPreviewPanel
+                  selectedTask={selectedTask}
+                  selectedVideo={selectedVideo}
+                  desktopAvailable={desktopAvailable}
+                  onSelectVideo={onSelectVideo}
+                  onStartVideoTask={onStartVideoTask}
+                  onOpenVideosFolder={onOpenVideos}
+                />
                 <SubtitleTimeline
                   timeline={snapshot.timeline}
                   selectedSubtitleId={selectedSubtitle?.id ?? ""}
@@ -69,10 +154,19 @@ export function AppShell({
               </>
             )}
 
-            {activeTab === "monitor" && <ServiceMonitorPanel services={snapshot.services} logs={snapshot.logs} />}
+            {activeTab === "monitor" && <ServiceMonitorPanel services={snapshot.services} logs={snapshot.logs} compose={compose} backendHealth={backendHealth} />}
 
             {activeTab === "results" && (
-              <ResultExportPanel quality={snapshot.quality} exports={snapshot.exports} timeline={snapshot.timeline} />
+              <ResultExportPanel
+                quality={snapshot.quality}
+                exports={snapshot.exports}
+                timeline={snapshot.timeline}
+                taskId={selectedTask.id.startsWith("task_") ? selectedTask.id : undefined}
+                onOpenResultsFolder={onOpenResults}
+                onCopyPath={onCopyPath}
+                onExportZip={onExportZip}
+                onSaveEditedSubtitles={onSaveEditedSubtitles}
+              />
             )}
 
             {activeTab === "settings" && <SettingsPanel />}
@@ -84,7 +178,7 @@ export function AppShell({
             ) : activeTab === "results" ? (
               <QualityReportPanel quality={snapshot.quality} selectedSubtitle={selectedSubtitle} />
             ) : activeTab === "settings" ? (
-              <ServiceMonitorPanel services={snapshot.services} logs={snapshot.logs.slice(0, 2)} compact />
+              <ServiceMonitorPanel services={snapshot.services} logs={snapshot.logs.slice(0, 2)} compose={compose} backendHealth={backendHealth} compact />
             ) : (
               <QualityReportPanel quality={snapshot.quality} selectedSubtitle={selectedSubtitle} />
             )}
