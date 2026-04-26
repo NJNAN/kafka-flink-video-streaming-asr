@@ -48,6 +48,16 @@ Thumbs.db
 *.pid
 
 # ------------------------------
+# Node / frontend local outputs
+# ------------------------------
+node_modules/
+/desktop-ui/node_modules/
+/desktop-ui/dist/
+/desktop-ui/output/
+/desktop-ui/vite-dev.*
+/desktop-ui/*.tsbuildinfo
+
+# ------------------------------
 # Local media sources
 # ------------------------------
 /input*.mp4
