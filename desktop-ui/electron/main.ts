@@ -635,6 +635,13 @@ async function startTask(payload: { taskId: string; options?: TaskStartOptions }
     "--passes",
     String(options.passes ?? 1)
   ];
+  if (options.profile) {
+    args.push("--profile", options.profile);
+    args.push("--use-static-hints");
+  }
+  if (options.enableRecovery === false) {
+    args.push("--no-recover-gaps");
+  }
 
   appendLog("task", `启动任务 ${task.task_id}，模型 ${model}`, "INFO");
   const child = spawn("python", args, {

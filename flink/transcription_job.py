@@ -18,8 +18,11 @@ from pyflink.datastream.connectors.kafka import (
 BOOTSTRAP_SERVERS = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "kafka:9092")
 AUDIO_TOPIC = os.getenv("AUDIO_TOPIC", "audio-segment")
 TRANSCRIPT_TOPIC = os.getenv("TRANSCRIPT_TOPIC", "transcription-result")
+FAILED_TOPIC = os.getenv("FAILED_TOPIC", "transcription-failed")
 ASR_URL = os.getenv("ASR_URL", "http://asr:8000").rstrip("/")
 ASR_TIMEOUT_SECONDS = int(os.getenv("ASR_TIMEOUT_SECONDS", "120"))
+ASR_RETRY_TIMES = int(os.getenv("ASR_RETRY_TIMES", "2"))
+ASR_RETRY_BACKOFF_MS = int(os.getenv("ASR_RETRY_BACKOFF_MS", "800"))
 
 
 def now_ms() -> int:
@@ -37,6 +40,40 @@ def stream_id_from_raw(raw_message: str) -> str:
         return str(data.get("stream_id", "unknown"))
     except Exception:
         return "unknown"
+
+
+def call_asr_with_retry(request_body: dict[str, Any]) -> tuple[dict[str, Any], str]:
+    """调用 ASR，失败后做短间隔重试，避免偶发网络/模型忙导致片段直接丢失。"""
+    last_error = ""
+    last_response_text = ""
+    for attempt in range(max(ASR_RETRY_TIMES, 0) + 1):
+        try:
+            response = requests.post(
+                f"{ASR_URL}/transcribe",
+                json=request_body,
+                timeout=ASR_TIMEOUT_SECONDS,
+            )
+            response.raise_for_status()
+            result = response.json()
+            result["retry_count"] = attempt
+            return result, ""
+        except Exception as exc:
+            last_error = str(exc)
+            if "response" in locals():
+                last_response_text = getattr(response, "text", "")[:500]
+            if attempt < ASR_RETRY_TIMES:
+                time.sleep(max(ASR_RETRY_BACKOFF_MS, 0) / 1000)
+
+    result = {
+        **request_body,
+        "text": "",
+        "language": "",
+        "inference_time_ms": 0,
+        "retry_count": max(ASR_RETRY_TIMES, 0),
+    }
+    if last_response_text:
+        last_error = f"{last_error}; response={last_response_text}"
+    return result, last_error
 
 
 def transcribe_segment(raw_message: str) -> str:
@@ -72,27 +109,18 @@ def transcribe_segment(raw_message: str) -> str:
 
     asr_start_at = now_ms()
     try:
-        response = requests.post(
-            f"{ASR_URL}/transcribe",
-            json=request_body,
-            timeout=ASR_TIMEOUT_SECONDS,
-        )
-        response.raise_for_status()
-        result = response.json()
+        result, error = call_asr_with_retry(request_body)
         status = result.get("status", "ok")
-        error = ""
     except Exception as exc:
-        response_text = ""
-        if "response" in locals():
-            response_text = getattr(response, "text", "")[:500]
         result = {
             **request_body,
             "text": "",
             "language": "",
             "inference_time_ms": 0,
+            "retry_count": max(ASR_RETRY_TIMES, 0),
         }
         status = "error"
-        error = f"{exc}; response={response_text}" if response_text else str(exc)
+        error = str(exc)
 
     asr_end_at = now_ms()
     finish_time = asr_end_at
@@ -125,6 +153,14 @@ def transcribe_segment(raw_message: str) -> str:
     return json.dumps(result, ensure_ascii=False)
 
 
+def is_failed_result(raw_message: str) -> bool:
+    try:
+        data = json.loads(raw_message)
+        return data.get("status") != "ok"
+    except Exception:
+        return True
+
+
 def build_kafka_source() -> KafkaSource:
     return (
         KafkaSource.builder()
@@ -138,10 +174,10 @@ def build_kafka_source() -> KafkaSource:
     )
 
 
-def build_kafka_sink() -> KafkaSink:
+def build_kafka_sink(topic: str) -> KafkaSink:
     serializer = (
         KafkaRecordSerializationSchema.builder()
-        .set_topic(TRANSCRIPT_TOPIC)
+        .set_topic(topic)
         .set_value_serialization_schema(SimpleStringSchema())
         .build()
     )
@@ -160,7 +196,8 @@ def main() -> None:
     env.enable_checkpointing(30_000)
 
     source = build_kafka_source()
-    sink = build_kafka_sink()
+    sink = build_kafka_sink(TRANSCRIPT_TOPIC)
+    failed_sink = build_kafka_sink(FAILED_TOPIC)
 
     stream = env.from_source(source, WatermarkStrategy.no_watermarks(), "audio-segment-source")
     result_stream = stream.key_by(stream_id_from_raw, key_type=Types.STRING()).map(
@@ -168,6 +205,7 @@ def main() -> None:
         output_type=Types.STRING(),
     )
     result_stream.sink_to(sink)
+    result_stream.filter(is_failed_result).sink_to(failed_sink)
 
     env.execute("video-audio-transcription-job")
 

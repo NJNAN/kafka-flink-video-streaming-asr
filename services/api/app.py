@@ -19,6 +19,16 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+from storage import (
+    init_db,
+    insert_failed_segment,
+    insert_failed_segments_many,
+    insert_metrics_sample,
+    insert_segment,
+    insert_segments_many,
+    summary as database_summary,
+)
+
 
 KAFKA_BOOTSTRAP_SERVERS = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "kafka:9092")
 TRANSCRIPT_TOPIC = os.getenv("TRANSCRIPT_TOPIC", "transcription-result")
@@ -28,7 +38,11 @@ REDIS_URL = os.getenv("REDIS_URL", "redis://redis:6379/0")
 CUSTOM_KEYWORD_FILE = os.getenv("CUSTOM_KEYWORD_FILE", "/config/custom_keywords.txt")
 ASR_CORRECTION_FILE = os.getenv("ASR_CORRECTION_FILE", "/config/asr_corrections.txt")
 RESULT_DIR = Path(os.getenv("RESULT_DIR", "/data/results"))
+DB_PATH = Path(os.getenv("STREAMSENSE_DB_PATH", str(RESULT_DIR / "streamsense.db")))
 HOTWORD_STATE_FILE = RESULT_DIR / "dynamic_hotwords.json"
+METRICS_HISTORY_FILE = RESULT_DIR / "metrics_history.jsonl"
+METRICS_HISTORY_INTERVAL_SECONDS = max(int(os.getenv("METRICS_HISTORY_INTERVAL_SECONDS", "5")), 1)
+METRICS_HISTORY_MAX_POINTS = max(int(os.getenv("METRICS_HISTORY_MAX_POINTS", "720")), 10)
 TOPIC_SHIFT_THRESHOLD = float(os.getenv("TOPIC_SHIFT_THRESHOLD", "0.35"))
 SENTENCE_END_RE = re.compile(r"^(.+?[。！？!?；;]+[\"'”’）)\]】]*)")
 PUNCT_TRANSLATION = str.maketrans(
@@ -126,6 +140,7 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 
 recent_transcripts: deque[dict[str, Any]] = deque(maxlen=500)
 recent_keywords: deque[dict[str, Any]] = deque(maxlen=500)
+metrics_history: deque[dict[str, Any]] = deque(maxlen=METRICS_HISTORY_MAX_POINTS)
 status = {
     "transcript_count": 0,
     "keyword_event_count": 0,
@@ -606,6 +621,13 @@ def load_transcript_history(limit: int = 5000, stream_id: str | None = None) -> 
     return sorted_segments(merged)[-limit:]
 
 
+def load_failed_history(limit: int = 5000, stream_id: str | None = None) -> list[dict[str, Any]]:
+    items = tail_jsonl(RESULT_DIR / "failed_segments.jsonl", limit)
+    if stream_id:
+        items = [item for item in items if item.get("stream_id") == stream_id]
+    return items[-limit:]
+
+
 def stream_ids_from_history() -> list[str]:
     ids = {str(item.get("stream_id", "unknown")) for item in load_transcript_history() if item.get("stream_id")}
     ids.update(str(key).split(":", 1)[0] for key in dynamic_hotword_meta.keys() if key)
@@ -629,6 +651,7 @@ def stream_hotwords(stream_id: str) -> list[dict[str, Any]]:
 
 def build_metrics_payload(stream_id: str | None = None) -> dict[str, Any]:
     items = load_transcript_history(stream_id=stream_id)
+    failed_items = load_failed_history(stream_id=stream_id)
     end_to_end = [float(numeric_ms(item, "end_to_end_time_ms")) for item in items if numeric_ms(item, "end_to_end_time_ms")]
     asr_times = [
         float(numeric_ms(item, "asr_inference_time_ms", "inference_time_ms", "asr_total_time_ms"))
@@ -650,6 +673,11 @@ def build_metrics_payload(stream_id: str | None = None) -> dict[str, Any]:
         for item in items
         if numeric_ms(item, "redis_write_time_ms")
     ]
+    retry_counts = [
+        float(item.get("retry_count", 0) or 0)
+        for item in items
+        if str(item.get("retry_count", "")).strip() != ""
+    ]
     created = [numeric_ms(item, "created_at", "audio_created_at_ms") for item in items]
     written = [numeric_ms(item, "result_written_at") for item in items]
     wall_ms = max(written) - min(created) if created and written else 0
@@ -665,7 +693,7 @@ def build_metrics_payload(stream_id: str | None = None) -> dict[str, Any]:
         "active_stream_count": len(stream_ids_from_history()),
         "total_segments": len(items),
         "success_segments": len(items),
-        "failed_segments": int(status.get("failed_segment_count", 0)),
+        "failed_segments": len(failed_items),
         "average_end_to_end_latency_ms": round(sum(end_to_end) / len(end_to_end), 2) if end_to_end else 0,
         "p50_latency_ms": round(percentile(end_to_end, 0.50), 2),
         "p95_latency_ms": round(percentile(end_to_end, 0.95), 2),
@@ -674,11 +702,38 @@ def build_metrics_payload(stream_id: str | None = None) -> dict[str, Any]:
         "kafka_flink_average_dispatch_ms": round(sum(kafka_flink) / len(kafka_flink), 2) if kafka_flink else 0,
         "api_average_aggregation_ms": round(sum(api_times) / len(api_times), 2) if api_times else 0,
         "redis_average_write_ms": round(sum(redis_times) / len(redis_times), 2) if redis_times else 0,
+        "retry_count_average": round(sum(retry_counts) / len(retry_counts), 2) if retry_counts else 0,
+        "retry_count_max": int(max(retry_counts)) if retry_counts else 0,
         "pending_segments": pending,
         "throughput_segments_per_second": throughput,
-        "recent_errors": list(status.get("recent_errors", []))[-10:],
+        "recent_errors": (failed_items + list(status.get("recent_errors", [])))[-10:],
         "hotwords_top10": all_hotwords[:10],
     }
+
+
+def load_metrics_history_from_file() -> None:
+    for item in tail_jsonl(METRICS_HISTORY_FILE, METRICS_HISTORY_MAX_POINTS):
+        metrics_history.append(item)
+
+
+async def collect_metrics_history() -> None:
+    """定期采样 API 指标，用于 Dashboard 曲线、实验复盘和 SQLite 统计。"""
+    while True:
+        try:
+            payload = build_metrics_payload()
+            payload["sampled_at_ms"] = now_ms()
+            metrics_history.append(payload)
+            await asyncio.to_thread(append_jsonl, METRICS_HISTORY_FILE, payload)
+            await asyncio.to_thread(insert_metrics_sample, DB_PATH, payload)
+        except Exception as exc:
+            print(f"[api] 指标历史采样失败: {exc}", flush=True)
+        await asyncio.sleep(METRICS_HISTORY_INTERVAL_SECONDS)
+
+
+def backfill_database_from_jsonl() -> None:
+    """把已有 JSONL 结果导入 SQLite，避免服务重启后结构化统计为空。"""
+    insert_segments_many(DB_PATH, tail_jsonl(RESULT_DIR / "transcripts.jsonl", 20000))
+    insert_failed_segments_many(DB_PATH, tail_jsonl(RESULT_DIR / "failed_segments.jsonl", 20000))
 
 
 def format_srt_time(ms: int) -> str:
@@ -1028,6 +1083,7 @@ async def handle_ready_transcript(transcript: dict[str, Any]) -> None:
     if created_at:
         transcript["end_to_end_time_ms"] = transcript["result_written_at"] - created_at
     await save_to_file(transcript, keyword_event)
+    await asyncio.to_thread(insert_segment, DB_PATH, transcript)
     await publish_keyword_event(keyword_event)
     await maybe_learn_hotwords(transcript)
 
@@ -1037,13 +1093,17 @@ async def handle_failed_transcript(transcript: dict[str, Any]) -> None:
     error_item = {
         "segment_id": transcript.get("segment_id", ""),
         "stream_id": transcript.get("stream_id", ""),
+        "run_id": transcript.get("run_id", ""),
         "error": str(transcript.get("error", ""))[:500],
+        "retry_count": int(transcript.get("retry_count", 0) or 0),
         "created_at_ms": now_ms(),
     }
     recent_errors = list(status.get("recent_errors", []))
     recent_errors.append(error_item)
     status["recent_errors"] = recent_errors[-20:]
-    await asyncio.to_thread(append_jsonl, RESULT_DIR / "failed_segments.jsonl", {**transcript, **error_item})
+    failed_payload = {**transcript, **error_item}
+    await asyncio.to_thread(append_jsonl, RESULT_DIR / "failed_segments.jsonl", failed_payload)
+    await asyncio.to_thread(insert_failed_segment, DB_PATH, failed_payload)
 
 
 async def flush_stale_sentence_buffers() -> None:
@@ -1122,9 +1182,13 @@ async def startup() -> None:
     custom_keywords = load_custom_keywords()
     asr_corrections = load_asr_corrections()
     load_dynamic_hotwords()
+    load_metrics_history_from_file()
+    await asyncio.to_thread(init_db, DB_PATH)
+    await asyncio.to_thread(backfill_database_from_jsonl)
     redis_client = redis.from_url(REDIS_URL, decode_responses=True)
     asyncio.create_task(consume_transcripts())
     asyncio.create_task(flush_stale_sentence_buffers())
+    asyncio.create_task(collect_metrics_history())
 
 
 @app.get("/")
@@ -1265,6 +1329,31 @@ async def keywords(stream_id: str | None = None, limit: int = Query(default=50, 
 @app.get("/api/metrics")
 async def metrics(stream_id: str | None = None) -> dict[str, Any]:
     return build_metrics_payload(stream_id=stream_id)
+
+
+@app.get("/api/metrics/history")
+async def metrics_history_endpoint(
+    stream_id: str | None = None,
+    limit: int = Query(default=120, ge=1, le=METRICS_HISTORY_MAX_POINTS),
+) -> list[dict[str, Any]]:
+    data = list(metrics_history)
+    if stream_id:
+        data = [item for item in data if item.get("stream_id") == stream_id]
+    return data[-limit:]
+
+
+@app.get("/api/failed-segments")
+async def failed_segments(limit: int = Query(default=50, ge=1, le=200)) -> list[dict[str, Any]]:
+    return tail_jsonl(RESULT_DIR / "failed_segments.jsonl", limit)
+
+
+@app.get("/api/database/summary")
+async def database_summary_endpoint(stream_id: str | None = None) -> dict[str, Any]:
+    return {
+        "status": "ok",
+        "db_path": str(DB_PATH),
+        "streams": await asyncio.to_thread(database_summary, DB_PATH, stream_id or ""),
+    }
 
 
 @app.get("/api/streams")

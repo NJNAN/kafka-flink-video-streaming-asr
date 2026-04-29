@@ -272,7 +272,29 @@ FFmpeg 实时读视频 -> VAD 切片 -> Kafka -> Flink -> ASR -> Kafka -> API ->
 - [docs/desktop-ui.md](./docs/desktop-ui.md)：原桌面工作台运行方式。
 - [docs/benchmark.md](./docs/benchmark.md)：压测脚本、输出报告和指标含义。
 - [docs/system_metrics.md](./docs/system_metrics.md)：时间戳字段、监控接口和动态热词池说明。
+- [docs/字幕质量评测说明.md](./docs/%E5%AD%97%E5%B9%95%E8%B4%A8%E9%87%8F%E8%AF%84%E6%B5%8B%E8%AF%B4%E6%98%8E.md)：用参考文本计算 CER、WER、关键词命中率。
+- [docs/答辩材料整理说明.md](./docs/%E7%AD%94%E8%BE%A9%E6%9D%90%E6%96%99%E6%95%B4%E7%90%86%E8%AF%B4%E6%98%8E.md)：一键整理答辩证据包。
+- [docs/结果数据库说明.md](./docs/%E7%BB%93%E6%9E%9C%E6%95%B0%E6%8D%AE%E5%BA%93%E8%AF%B4%E6%98%8E.md)：SQLite 结构化实验库和查询方式。
+- [docs/领域Profile说明.md](./docs/%E9%A2%86%E5%9F%9FProfile%E8%AF%B4%E6%98%8E.md)：不同领域热词和纠错表的切换方式。
+- [docs/自动化验收说明.md](./docs/%E8%87%AA%E5%8A%A8%E5%8C%96%E9%AA%8C%E6%94%B6%E8%AF%B4%E6%98%8E.md)：演示前冒烟测试。
+- [docs/答辩完整讲稿.md](./docs/%E7%AD%94%E8%BE%A9%E5%AE%8C%E6%95%B4%E8%AE%B2%E7%A8%BF.md)：完整介绍项目、架构、求精点、实验结果和现场问答。
 - [docs/Git提交与仓库说明.md](./docs/Git%E6%8F%90%E4%BA%A4%E4%B8%8E%E4%BB%93%E5%BA%93%E8%AF%B4%E6%98%8E.md)：哪些文件该提交，哪些文件不能提交。
+
+求精后的常用命令：
+
+```powershell
+# 字幕质量评测
+python tools/evaluate_subtitles.py --candidate data/results/single_test/input2.vtt --reference data/reference/input2_reference.txt --output-dir data/results/evaluation --basename input2
+
+# 冒烟测试
+python tools/smoke_check.py
+
+# 一键整理答辩材料
+python tools/make_defense_package.py --output-dir data/results/defense_package
+
+# SQLite 结果统计
+python tools/query_results.py --db data/results/streamsense.db --summary
+```
 
 ## 9. Git 提交注意
 

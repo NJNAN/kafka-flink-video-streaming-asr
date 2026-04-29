@@ -1,0 +1,16 @@
+# 大数据课程/系统答辩常用领域词
+Kafka
+Flink
+Redis
+Docker
+Whisper
+ASR
+FFmpeg
+VAD
+checkpoint
+topic
+consumer group
+实时字幕
+流处理
+端到端延迟
+关键词分析

@@ -37,6 +37,7 @@ services:
       TRANSCRIPT_TOPIC: ${TRANSCRIPT_TOPIC:-transcription-result}
       KEYWORD_TOPIC: ${KEYWORD_TOPIC:-keyword-event}
       HOTWORD_UPDATE_TOPIC: ${HOTWORD_UPDATE_TOPIC:-streamsense.hotword.updates}
+      FAILED_TOPIC: ${FAILED_TOPIC:-transcription-failed}
       LOG_DIR: /tmp
     command: >
       bash -lc "export LOG_DIR=/tmp &&
@@ -44,7 +45,8 @@ services:
       kafka-topics --bootstrap-server kafka:9092 --create --if-not-exists --topic $$AUDIO_TOPIC --partitions 3 --replication-factor 1 &&
       kafka-topics --bootstrap-server kafka:9092 --create --if-not-exists --topic $$TRANSCRIPT_TOPIC --partitions 3 --replication-factor 1 &&
       kafka-topics --bootstrap-server kafka:9092 --create --if-not-exists --topic $$KEYWORD_TOPIC --partitions 3 --replication-factor 1 &&
-      kafka-topics --bootstrap-server kafka:9092 --create --if-not-exists --topic $$HOTWORD_UPDATE_TOPIC --partitions 3 --replication-factor 1"
+      kafka-topics --bootstrap-server kafka:9092 --create --if-not-exists --topic $$HOTWORD_UPDATE_TOPIC --partitions 3 --replication-factor 1 &&
+      kafka-topics --bootstrap-server kafka:9092 --create --if-not-exists --topic $$FAILED_TOPIC --partitions 3 --replication-factor 1"
     restart: "no"
 
   redis:
@@ -140,6 +142,9 @@ services:
       SENTENCE_DROP_INCOMPLETE_ON_FLUSH: ${SENTENCE_DROP_INCOMPLETE_ON_FLUSH:-false}
       SENTENCE_MARK_INCOMPLETE_ON_FLUSH: ${SENTENCE_MARK_INCOMPLETE_ON_FLUSH:-true}
       SENTENCE_INCOMPLETE_ENDINGS: ${SENTENCE_INCOMPLETE_ENDINGS:-因为|所以|但是|然而|并且|以及|如果|虽然|或者|并不是|换句话说|比如|例如|首先|其次}
+      STREAMSENSE_DB_PATH: ${STREAMSENSE_DB_PATH:-/data/results/streamsense.db}
+      METRICS_HISTORY_INTERVAL_SECONDS: ${METRICS_HISTORY_INTERVAL_SECONDS:-5}
+      METRICS_HISTORY_MAX_POINTS: ${METRICS_HISTORY_MAX_POINTS:-720}
     volumes:
       - ./config:/config
       - ./data:/data
@@ -194,8 +199,11 @@ services:
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       AUDIO_TOPIC: ${AUDIO_TOPIC:-audio-segment}
       TRANSCRIPT_TOPIC: ${TRANSCRIPT_TOPIC:-transcription-result}
+      FAILED_TOPIC: ${FAILED_TOPIC:-transcription-failed}
       ASR_URL: http://asr:8000
       ASR_TIMEOUT_SECONDS: 120
+      ASR_RETRY_TIMES: ${ASR_RETRY_TIMES:-2}
+      ASR_RETRY_BACKOFF_MS: ${ASR_RETRY_BACKOFF_MS:-800}
       FLINK_JOB_PARALLELISM: ${FLINK_JOB_PARALLELISM:-1}
     volumes:
       - ./data:/data

@@ -203,6 +203,7 @@ export interface TaskStartOptions {
   computeType?: string;
   passes?: number;
   enableRecovery?: boolean;
+  profile?: string;
   vadTargetChunkMs?: number;
   vadHardMaxChunkMs?: number;
   vadMaxSilenceMs?: number;

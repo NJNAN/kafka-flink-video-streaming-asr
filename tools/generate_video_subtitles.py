@@ -97,6 +97,53 @@ def load_auxiliary_hotwords(custom_keywords_path: Path, corrections_path: Path) 
     return words
 
 
+def profile_paths(profile: str) -> tuple[Path | None, Path | None]:
+    profile = profile.strip()
+    if not profile:
+        return None, None
+    safe_name = re.sub(r"[^A-Za-z0-9_-]+", "", profile)
+    if not safe_name:
+        raise SystemExit(f"profile 名称非法: {profile}")
+    folder = Path("config/profiles")
+    return folder / f"{safe_name}_keywords.txt", folder / f"{safe_name}_corrections.txt"
+
+
+def merge_corrections(*paths: Path | None) -> list[tuple[str, str]]:
+    """按顺序合并默认纠错表和 profile 纠错表，后者可以补充领域词。"""
+    merged: list[tuple[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    for path in paths:
+        if path is None:
+            continue
+        for item in load_corrections(path):
+            if item not in seen:
+                merged.append(item)
+                seen.add(item)
+    return merged
+
+
+def merge_hotwords(*paths: Path | None, corrections_paths: list[Path | None] | None = None) -> list[str]:
+    """合并多个热词文件，并把纠错表右侧正确词也作为可选热词。"""
+    words: list[str] = []
+    seen: set[str] = set()
+    for path in paths:
+        if path is None or not path.exists():
+            continue
+        for line in path.read_text(encoding="utf-8").splitlines():
+            word = line.strip()
+            if word and not word.startswith("#") and word not in seen:
+                words.append(word)
+                seen.add(word)
+    for correction_path in corrections_paths or []:
+        if correction_path is None or not correction_path.exists():
+            continue
+        for _, right in load_corrections(correction_path):
+            if right and right not in seen:
+                words.append(right)
+                seen.add(right)
+    return words
+
+
 def normalize_piece_length(text: str) -> int:
     compact = re.sub(r"[，,。！？!?；;、…\s]", "", text)
     return max(len(compact), 1)
@@ -491,6 +538,7 @@ def main() -> None:
     parser.add_argument("--max-duration-ms", type=int, default=6500)
     parser.add_argument("--hotword-top-k", type=int, default=40)
     parser.add_argument("--custom-keywords", default="config/custom_keywords.txt")
+    parser.add_argument("--profile", default="", help="领域 Profile 名称，例如 bigdata / meeting / dino。")
     parser.add_argument("--passes", type=int, choices=[1, 2], default=1)
     parser.add_argument("--use-static-hints", action="store_true")
     parser.add_argument("--keep-boilerplate", action="store_true")
@@ -510,12 +558,17 @@ def main() -> None:
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     corrections_path = Path(args.corrections)
-    corrections = load_corrections(corrections_path)
+    profile_keyword_path, profile_correction_path = profile_paths(args.profile)
+    corrections = merge_corrections(corrections_path, profile_correction_path)
     drop_patterns = [] if args.keep_boilerplate else DEFAULT_DROP_PATTERNS
 
     auxiliary_hotwords = []
     if args.use_static_hints:
-        auxiliary_hotwords = load_auxiliary_hotwords(Path(args.custom_keywords), corrections_path)
+        auxiliary_hotwords = merge_hotwords(
+            Path(args.custom_keywords),
+            profile_keyword_path,
+            corrections_paths=[corrections_path, profile_correction_path],
+        )
 
     chunk_dir = Path(args.chunk_dir)
     chunk_files = collect_chunk_files(chunk_dir) if chunk_dir.exists() else []
@@ -660,6 +713,9 @@ def main() -> None:
             "media_path": media_path,
             "local_media_path": str(local_media_path) if local_media_path else "",
             "run_id": run_id,
+            "profile": args.profile,
+            "profile_keyword_file": str(profile_keyword_path or ""),
+            "profile_correction_file": str(profile_correction_path or ""),
         },
     )
     save_json(
@@ -669,6 +725,9 @@ def main() -> None:
             "media_path": media_path,
             "local_media_path": str(local_media_path) if local_media_path else "",
             "run_id": run_id,
+            "profile": args.profile,
+            "profile_keyword_file": str(profile_keyword_path or ""),
+            "profile_correction_file": str(profile_correction_path or ""),
             "passes": args.passes,
             "duration_ms": duration_ms,
             "elapsed_ms": elapsed_ms,
@@ -686,6 +745,7 @@ def main() -> None:
 
     print(f"mode: {'chunks' if use_chunks else 'full'}")
     print(f"run_id: {run_id}")
+    print(f"profile: {args.profile or 'default'}")
     print(f"passes: {args.passes}")
     print(f"pass1 segments: {len(primary.get('segments', []))}")
     print(f"final pass segments: {len(final_pass.get('segments', []))}")

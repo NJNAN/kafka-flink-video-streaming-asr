@@ -167,7 +167,8 @@ button {
   gap: 10px;
 }
 
-.path-row input {
+.path-row input,
+.path-row select {
   min-width: 0;
   height: 42px;
   padding: 0 13px;
@@ -177,7 +178,8 @@ button {
   background: rgba(255, 255, 255, 0.9);
 }
 
-.path-row input:focus {
+.path-row input:focus,
+.path-row select:focus {
   outline: none;
   border-color: #2563eb;
   box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.12);

@@ -32,6 +32,32 @@
           <span class="label">最近延迟</span>
           <strong id="latest-latency">-</strong>
         </div>
+        <div>
+          <span class="label">P95 延迟</span>
+          <strong id="p95-latency">-</strong>
+        </div>
+        <div>
+          <span class="label">吞吐量</span>
+          <strong id="throughput">-</strong>
+        </div>
+        <div>
+          <span class="label">失败片段</span>
+          <strong id="failed-count">0</strong>
+        </div>
+      </section>
+
+      <section class="panel history">
+        <div class="panel-title">
+          <h2>实时指标历史</h2>
+        </div>
+        <canvas id="metrics-chart" width="960" height="260"></canvas>
+      </section>
+
+      <section class="panel failures">
+        <div class="panel-title">
+          <h2>失败片段</h2>
+        </div>
+        <div id="failed-list" class="list compact-list"></div>
       </section>
 
       <section class="panel transcripts">
@@ -52,4 +78,3 @@
     <script src="/static/app.js"></script>
   </body>
 </html>
-

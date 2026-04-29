@@ -77,6 +77,7 @@ export function App() {
   const desktopAvailable = typeof window !== "undefined" && Boolean(window.streamsense);
   const [video, setVideo] = useState<SelectedVideo | null>(null);
   const [outputDir, setOutputDir] = useState("");
+  const [profile, setProfile] = useState("bigdata");
   const [task, setTask] = useState<DesktopTask | null>(null);
   const [status, setStatus] = useState<UiStatus>("idle");
   const [message, setMessage] = useState(desktopAvailable ? "点击中间区域选择视频，或把视频拖进来。" : "Web 模式无法读取本地完整路径，请用 Electron 启动。");
@@ -229,7 +230,7 @@ export function App() {
     }
     setTask(created.data);
     setMessage("任务已创建，正在启动字幕生成...");
-    const started = await window.streamsense.startTask(created.data.task_id, { mode: "标准质量", model: "medium" });
+    const started = await window.streamsense.startTask(created.data.task_id, { mode: "标准质量", model: "medium", profile });
     if (!started.ok || !started.data) {
       setBusy(false);
       setStatus("error");
@@ -282,6 +283,19 @@ export function App() {
           <div>
             <input value={outputDir} onChange={(event) => setOutputDir(event.target.value)} placeholder="选择字幕输出目录" />
             <button type="button" onClick={chooseOutputDir} disabled={!desktopAvailable}>浏览</button>
+          </div>
+        </label>
+
+        <label className="path-row">
+          <span>领域 Profile</span>
+          <div>
+            <select value={profile} onChange={(event) => setProfile(event.target.value)}>
+              <option value="bigdata">大数据课设</option>
+              <option value="course">课程视频</option>
+              <option value="meeting">会议录音</option>
+              <option value="dino">恐龙专题</option>
+              <option value="">通用</option>
+            </select>
           </div>
         </label>
 

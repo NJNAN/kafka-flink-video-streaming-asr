@@ -1,6 +1,13 @@
 import { useEffect, useState } from "react";
 
 const modelOptions = ["small", "base", "medium", "large-v3"];
+const profileOptions = [
+  { value: "", label: "通用" },
+  { value: "bigdata", label: "大数据课设" },
+  { value: "course", label: "课程视频" },
+  { value: "meeting", label: "会议录音" },
+  { value: "dino", label: "恐龙专题" }
+];
 const hotwords = ["Kafka", "Flink", "字幕补漏", "语音识别", "流处理"];
 const corrections = ["卡夫卡 => Kafka", "弗林克 => Flink", "微斯珀 => Whisper"];
 
@@ -33,6 +40,14 @@ export function SettingsPanel() {
       <div className="settings-groups">
         <fieldset>
           <legend>ASR 模型</legend>
+          <label>
+            <span>领域 Profile <em title="选择不同领域热词和纠错表">?</em></span>
+            <select value={String(settings.profile ?? "bigdata")} onChange={(event) => setSetting("profile", event.target.value)}>
+              {profileOptions.map((option) => (
+                <option value={option.value} key={option.value || "default"}>{option.label}</option>
+              ))}
+            </select>
+          </label>
           <label>
             <span>ASR_MODEL <em title="对应 faster-whisper 模型名称">?</em></span>
             <select value={String(settings.model ?? "large-v3")} onChange={(event) => setSetting("model", event.target.value)}>

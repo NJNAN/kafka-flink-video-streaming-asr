@@ -1,0 +1,11 @@
+卡夫卡=>Kafka
+卡夫卡队列=>Kafka 队列
+弗林克=>Flink
+福林克=>Flink
+瑞迪斯=>Redis
+微斯珀=>Whisper
+威斯珀=>Whisper
+艾斯阿尔=>ASR
+检查点=>checkpoint
+托匹克=>topic
+消费者组=>consumer group

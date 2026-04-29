@@ -44,9 +44,64 @@
 - `p95_latency_ms`
 - `p99_latency_ms`
 - `asr_average_time_ms`
+- `kafka_flink_average_dispatch_ms`
+- `api_average_aggregation_ms`
+- `redis_average_write_ms`
+- `retry_count_average`
+- `retry_count_max`
 - `pending_segments`
 - `recent_errors`
 - `hotwords_top10`
+
+### `/api/metrics/history`
+
+返回最近一段时间的指标采样，默认最多返回 120 个点：
+
+```text
+/api/metrics/history
+/api/metrics/history?limit=120
+/api/metrics/history?stream_id=demo-video
+```
+
+这些采样也会追加写入：
+
+```text
+data/results/metrics_history.jsonl
+```
+
+并写入 SQLite：
+
+```text
+data/results/streamsense.db
+```
+
+### `/api/failed-segments`
+
+返回最近失败片段：
+
+```text
+/api/failed-segments?limit=50
+```
+
+失败片段会包含：
+
+- `stream_id`
+- `run_id`
+- `segment_id`
+- `error`
+- `retry_count`
+- `created_at_ms`
+
+### `/api/database/summary`
+
+返回 SQLite 里的结构化统计：
+
+```text
+/api/database/summary
+/api/database/summary?stream_id=demo-video
+```
+
+这个接口适合答辩时解释“实验结果不只是日志，也能结构化查询”。
 
 ### `/api/streams`
 
