@@ -147,16 +147,25 @@ def build_message(
 ) -> dict:
     segment_index = parse_index(file_path)
     segment_id = f"{stream_id}-{run_id}-{segment_index:06d}"
+    created_at = int(time.time() * 1000)
+    duration_ms = max(end_ms - start_ms, 0)
     return {
         "segment_id": segment_id,
         "stream_id": stream_id,
         "run_id": run_id,
         "file_path": file_path,
+        "start_time": round(start_ms / 1000, 3),
+        "end_time": round(end_ms / 1000, 3),
+        "duration": round(duration_ms / 1000, 3),
         "start_time_ms": start_ms,
         "end_time_ms": end_ms,
-        "duration_ms": max(end_ms - start_ms, 0),
+        "duration_ms": duration_ms,
         "sample_rate": SAMPLE_RATE,
-        "created_at_ms": int(time.time() * 1000),
+        "created_at": created_at,
+        "vad_start_at": created_at,
+        "vad_end_at": created_at,
+        "kafka_sent_at": 0,
+        "created_at_ms": created_at,
         "source_type": "url" if is_url(source) else "file",
     }
 
@@ -172,6 +181,7 @@ def publish_chunk_message(
     source: str,
 ) -> None:
     message = build_message(stream_id, run_id, str(audio_path), start_ms, end_ms, source)
+    message["kafka_sent_at"] = int(time.time() * 1000)
     producer.send(topic, key=stream_id, value=message)
     producer.flush()
     print(f"[ingest] 已发送音频片段到 Kafka: {message['segment_id']}", flush=True)

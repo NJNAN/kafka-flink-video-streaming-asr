@@ -31,9 +31,17 @@ def safe_get(data: dict[str, Any], key: str, default: Any = "") -> Any:
     return data.get(key, default)
 
 
+def stream_id_from_raw(raw_message: str) -> str:
+    try:
+        data = json.loads(raw_message)
+        return str(data.get("stream_id", "unknown"))
+    except Exception:
+        return "unknown"
+
+
 def transcribe_segment(raw_message: str) -> str:
     """Flink 的核心处理函数：收到音频片段消息，调用本地 ASR 服务。"""
-    flink_receive_time = now_ms()
+    flink_received_at = now_ms()
 
     try:
         audio_message = json.loads(raw_message)
@@ -43,7 +51,8 @@ def transcribe_segment(raw_message: str) -> str:
                 "status": "error",
                 "error": f"非法 JSON: {exc}",
                 "raw_message": raw_message,
-                "flink_receive_time_ms": flink_receive_time,
+                "flink_received_at": flink_received_at,
+                "flink_receive_time_ms": flink_received_at,
                 "flink_finish_time_ms": now_ms(),
             },
             ensure_ascii=False,
@@ -57,7 +66,11 @@ def transcribe_segment(raw_message: str) -> str:
         "start_time_ms": safe_get(audio_message, "start_time_ms", 0),
         "end_time_ms": safe_get(audio_message, "end_time_ms", 0),
     }
+    hotwords = safe_get(audio_message, "hotwords", "")
+    if hotwords:
+        request_body["hotwords"] = hotwords
 
+    asr_start_at = now_ms()
     try:
         response = requests.post(
             f"{ASR_URL}/transcribe",
@@ -81,18 +94,31 @@ def transcribe_segment(raw_message: str) -> str:
         status = "error"
         error = f"{exc}; response={response_text}" if response_text else str(exc)
 
-    finish_time = now_ms()
-    created_at_ms = safe_get(audio_message, "created_at_ms", flink_receive_time)
+    asr_end_at = now_ms()
+    finish_time = asr_end_at
+    created_at_ms = safe_get(audio_message, "created_at_ms", safe_get(audio_message, "created_at", flink_received_at))
+    kafka_sent_at = safe_get(audio_message, "kafka_sent_at", 0)
 
     # 保留每个阶段的时间，后续论文可以用这些字段做延迟分析。
     result.update(
         {
             "status": status,
             "error": error,
+            "created_at": int(created_at_ms),
+            "vad_start_at": safe_get(audio_message, "vad_start_at", int(created_at_ms)),
+            "vad_end_at": safe_get(audio_message, "vad_end_at", int(created_at_ms)),
+            "kafka_sent_at": kafka_sent_at,
+            "flink_received_at": flink_received_at,
+            "asr_start_at": asr_start_at,
+            "asr_end_at": asr_end_at,
             "audio_created_at_ms": created_at_ms,
-            "flink_receive_time_ms": flink_receive_time,
+            "wall_start_at_ms": safe_get(audio_message, "wall_start_at_ms", 0),
+            "wall_end_at_ms": safe_get(audio_message, "wall_end_at_ms", 0),
+            "flink_receive_time_ms": flink_received_at,
             "flink_finish_time_ms": finish_time,
-            "flink_process_time_ms": finish_time - flink_receive_time,
+            "flink_process_time_ms": finish_time - flink_received_at,
+            "kafka_flink_dispatch_time_ms": flink_received_at - int(kafka_sent_at) if kafka_sent_at else 0,
+            "asr_total_time_ms": asr_end_at - asr_start_at,
             "end_to_end_time_ms": finish_time - int(created_at_ms),
         }
     )
@@ -130,14 +156,17 @@ def build_kafka_sink() -> KafkaSink:
 
 def main() -> None:
     env = StreamExecutionEnvironment.get_execution_environment()
-    env.set_parallelism(1)
+    env.set_parallelism(int(os.getenv("FLINK_JOB_PARALLELISM", "1")))
     env.enable_checkpointing(30_000)
 
     source = build_kafka_source()
     sink = build_kafka_sink()
 
     stream = env.from_source(source, WatermarkStrategy.no_watermarks(), "audio-segment-source")
-    result_stream = stream.map(transcribe_segment, output_type=Types.STRING())
+    result_stream = stream.key_by(stream_id_from_raw, key_type=Types.STRING()).map(
+        transcribe_segment,
+        output_type=Types.STRING(),
+    )
     result_stream.sink_to(sink)
 
     env.execute("video-audio-transcription-job")

@@ -29,6 +29,7 @@ class TranscribeRequest(BaseModel):
     file_path: str
     start_time_ms: int
     end_time_ms: int
+    hotwords: str = ""
 
 
 class MediaTranscribeRequest(BaseModel):
@@ -675,6 +676,7 @@ def transcribe(request: TranscribeRequest) -> dict[str, Any]:
         result = transcribe_with_model(
             audio_path,
             session_id=session_id,
+            extra_hotwords=request.hotwords,
             aggressive_filtering=True,
             include_context=True,
         )

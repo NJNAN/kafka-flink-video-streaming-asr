@@ -1,91 +1,216 @@
 # StreamSense：基于 Kafka-Flink 的视频流语音转写与关键词分析系统
 
-这是一个可以本地运行的课程项目原型。它读取真实视频文件或真实 RTSP/HTTP 视频流，用本地 `faster-whisper` 模型完成语音转写，再通过 Kafka、Flink、Redis 和 FastAPI 做流式处理、关键词分析、实时展示和字幕导出。
+StreamSense 是一个课程设计级别的本地语音转写系统。它能把真实视频、摄像头、麦克风或直播流里的声音转成字幕，并且提供两套入口：
 
-项目不是模拟数据演示。音频来自真实视频，字幕可以导出为 `SRT / VTT / TXT / JSON`，也可以通过 Web Dashboard 或 Electron 桌面工作台查看。
+- `desktop-ui/`：离线字幕生成器，适合选择一个本地视频，生成最终 `SRT / VTT / TXT / JSON` 字幕文件。
+- `desktop-ui-live/`：大数据实时字幕版，适合打开摄像头和麦克风，走 `Kafka + Flink + ASR + API` 链路实时显示字幕。
 
-## 1. 一句话运行方式
+一句人话：这个项目把“视频/直播声音”变成“可展示、可导出、可分析的字幕和关键词”，并且能用 Kafka/Flink 说明它是一个流式大数据处理系统。
 
-先把视频放到 `videos/input.mp4`，然后在项目根目录执行：
+## 1. 先分清两个版本
+
+| 版本 | 目录 | 是否走 Kafka/Flink | 适合做什么 | 入口 |
+| --- | --- | --- | --- | --- |
+| 离线字幕生成器 | `desktop-ui/` | 不走 | 处理一个已有视频，生成最终字幕文件 | `StreamSense.exe` |
+| 大数据实时字幕版 | `desktop-ui-live/` | 走 | 摄像头/麦克风/直播流实时字幕，适合课程设计演示 | `StreamSenseLive.exe` |
+| 后端流处理系统 | `services/` + `flink/` + `docker-compose.yml` | 走 | Kafka、Flink、ASR、API、Redis、Dashboard | `docker compose up` |
+
+不要把这两个桌面端混在一起改：
+
+- 想改“本地视频生成字幕”：看 `desktop-ui/`、`tools/generate_video_subtitles.py`。
+- 想改“实时摄像头/麦克风字幕”：看 `desktop-ui-live/`、`desktop-ui-live/live-ingest/app.py`、`flink/transcription_job.py`。
+
+## 2. 快速启动
+
+### 2.1 启动完整后端链路
+
+第一次运行先复制环境变量：
 
 ```powershell
 Copy-Item .env.example .env
+```
+
+启动 Kafka、Flink、Redis、API、ASR、视频接入服务：
+
+```powershell
 docker compose up -d --build
 ```
 
-打开：
+打开检查：
 
 - Dashboard：`http://localhost:8000`
 - ASR 健康检查：`http://localhost:8001/health`
 - Flink Web UI：`http://localhost:8081`
 
-如果你只想生成最终字幕文件，执行：
+### 2.2 只生成一个视频的离线字幕
 
 ```powershell
 python tools/generate_video_subtitles.py --media-path videos/input.mp4 --output-dir data/results/input --basename input
 ```
 
-更完整的傻瓜式步骤看：[docs/傻瓜式实现文档.md](./docs/%E5%82%BB%E7%93%9C%E5%BC%8F%E5%AE%9E%E7%8E%B0%E6%96%87%E6%A1%A3.md)。
+输出会在 `data/results/input/` 里，通常包括 `.srt`、`.vtt`、`.txt`、`.json`。
 
-## 2. 项目能做什么
+### 2.3 运行离线桌面端
 
-- 接入本地视频文件、RTSP 摄像头、HTTP/FLV 视频流。
-- 用 FFmpeg 从真实视频中抽取音频。
-- 用 WebRTC VAD 按语音停顿动态切片，减少机械切断句子的问题。
-- 把音频片段元数据写入 Kafka。
-- 用 Flink 消费 Kafka 消息，并调用本地 ASR 服务。
-- 用 `faster-whisper` 在本机 GPU 或 CPU 上转写中文语音。
-- 提取关键词，发现动态热词，输出关键词事件。
-- 用 Redis 和 JSONL 保存实时结果。
-- 通过网页或桌面端查看字幕、服务状态和结果文件。
-- 生成 `.srt`、`.vtt`、`.txt`、`.json` 字幕与报告。
-
-## 3. 技术路线
-
-```text
-真实视频/视频流
-  -> services/ingest：FFmpeg 抽音频 + VAD 切片
-  -> Kafka audio-segment topic
-  -> flink/transcription_job.py：消费切片并调度 ASR
-  -> services/asr：faster-whisper 本地语音识别
-  -> Kafka transcription-result topic
-  -> services/api：句子缓冲、关键词提取、热词更新、结果落盘
-  -> Redis + data/results + Dashboard/桌面端
+```powershell
+cd desktop-ui
+npm install
+npm run electron:dev
 ```
 
-详细原理看：[docs/原理解说.md](./docs/%E5%8E%9F%E7%90%86%E8%A7%A3%E8%AF%B4.md)。
+打包：
 
-## 4. 目录结构
+```powershell
+cd desktop-ui
+npm run dist
+```
+
+打包后的可执行文件：
+
+```text
+desktop-ui/release/win-unpacked/StreamSense.exe
+desktop-ui/release/StreamSense Setup 0.1.0.exe
+```
+
+### 2.4 运行大数据实时字幕桌面端
+
+开发模式：
+
+```powershell
+cd desktop-ui-live
+npm install
+npm run electron:dev
+```
+
+打包：
+
+```powershell
+cd desktop-ui-live
+npm run dist
+```
+
+打包后的可执行文件：
+
+```text
+desktop-ui-live/release/win-unpacked/StreamSenseLive.exe
+desktop-ui-live/release/StreamSense Live Setup 0.1.0.exe
+```
+
+如果实时版要手动启动大数据服务，可以在项目根目录执行：
+
+```powershell
+docker compose -f docker-compose.yml -f desktop-ui-live\docker-compose.live.yml up -d --no-build
+```
+
+如果是第一次构建镜像，改用：
+
+```powershell
+docker compose -f docker-compose.yml -f desktop-ui-live\docker-compose.live.yml up -d --build
+```
+
+## 3. 两条核心链路
+
+### 3.1 离线字幕链路
+
+这个链路目标是“最终字幕质量”，不强调实时性，也不走 Kafka/Flink。
+
+```text
+desktop-ui/src/App.tsx
+  -> desktop-ui/electron/main.ts:createTask()
+  -> desktop-ui/electron/main.ts:startTask()
+  -> tools/generate_video_subtitles.py
+  -> services/asr/app.py 或 services/asr/asr_service.py
+  -> data/results/tasks/<task_id>/
+```
+
+适合场景：
+
+- 给已有课程视频、会议视频、录屏生成字幕。
+- 导出 `.srt` 给播放器或剪辑软件用。
+- 答辩时展示“可用的字幕生成工具”。
+
+### 3.2 大数据实时字幕链路
+
+这个链路目标是“实时流处理演示”，核心价值是把实时音频拆成连续任务，交给 Kafka/Flink 调度。
+
+```text
+摄像头/麦克风
+  -> desktop-ui-live/src/App.tsx：分段录音并上传
+  -> desktop-ui-live/live-ingest/app.py：接收 WebM，转 WAV，过滤静音
+  -> Kafka audio-segment topic
+  -> flink/transcription_job.py：消费音频片段并调用 ASR
+  -> services/asr/asr_service.py：faster-whisper 本地转写
+  -> Kafka transcription-result topic
+  -> services/api/app.py：聚合字幕、关键词、指标
+  -> Redis + data/results + desktop-ui-live 实时显示
+```
+
+适合场景：
+
+- 摄像头/麦克风实时字幕。
+- 展示 Kafka 消息队列、Flink 流处理、ASR 服务解耦。
+- 做多路流压测和课程设计答辩。
+
+## 4. 项目目录
 
 ```text
 .
-├── docker-compose.yml              # 一键启动 Kafka/Flink/Redis/API/ASR/ingest
+├── docker-compose.yml              # 主后端：Kafka/Flink/Redis/API/ASR/ingest
 ├── .env.example                    # 环境变量模板
 ├── config/                         # 热词、纠错词表、领域 profile
 ├── data/
 │   ├── audio/                      # 运行时音频切片，不提交 Git
-│   └── results/                    # 字幕和报告输出，不提交 Git
-├── desktop-ui/                     # React + Electron 桌面工作台
-├── docs/                           # 操作文档、原理解说、Git 说明
+│   └── results/                    # 字幕、报告、压测输出，不提交 Git
+├── desktop-ui/                     # 离线字幕生成器 Electron 前端
+├── desktop-ui-live/                # 大数据实时字幕 Electron 前端和 live-ingest 服务
+├── docs/                           # 新手文档、原理解说、压测报告、Git 说明
 ├── flink/                          # PyFlink 转写调度任务
-├── models/                         # 本地模型缓存，不提交 Git
+├── models/                         # 本地 Whisper 模型缓存，不提交 Git
 ├── services/
-│   ├── api/                        # FastAPI Dashboard、结果接口、关键词分析
-│   ├── asr/                        # faster-whisper HTTP 服务
-│   └── ingest/                     # 视频接入和音频切片
-├── tools/                          # 字幕生成、导出、批量验收脚本
+│   ├── api/                        # FastAPI Dashboard、字幕接口、关键词分析
+│   ├── asr/                        # faster-whisper HTTP 转写服务
+│   └── ingest/                     # 视频文件/视频流接入和音频切片
+├── tools/                          # 离线字幕生成、批处理、压测脚本
 └── videos/                         # 本地测试视频，不提交 Git
 ```
 
-## 5. 推荐环境
+## 5. 核心配置
 
-- Windows 10/11
-- Docker Desktop
-- Python 3.10+
-- Node.js / npm，仅桌面端开发需要
-- NVIDIA GPU，推荐 RTX 4060 8GB 或以上
+第一次运行：
 
-没有 GPU 也能跑，但要把 `.env` 里的 `ASR_DEVICE=cuda` 改成 `ASR_DEVICE=cpu`，速度会明显变慢。
+```powershell
+Copy-Item .env.example .env
+```
+
+常用配置：
+
+```text
+VIDEO_SOURCE=/videos/input.mp4
+STREAM_ID=demo-video
+INGEST_SEGMENT_MODE=vad
+ASR_MODEL=large-v3
+ASR_DEVICE=cuda
+ASR_COMPUTE_TYPE=float16
+SENTENCE_BUFFER_ENABLED=true
+HOTWORD_AUTO_DISCOVERY_ENABLED=true
+FLINK_JOB_PARALLELISM=1
+```
+
+如果显存不够：
+
+```text
+ASR_MODEL=medium
+ASR_COMPUTE_TYPE=int8_float16
+```
+
+如果没有 NVIDIA GPU：
+
+```text
+ASR_DEVICE=cpu
+ASR_COMPUTE_TYPE=int8
+```
+
+实时桌面端为了降低等待时间，会在 `desktop-ui-live/electron/main.ts` 里给 Compose 进程设置更轻的默认值，例如 `ASR_MODEL=small`、`ASR_COMPUTE_TYPE=int8_float16`、`FLINK_JOB_PARALLELISM=2`。如果要追求准确率，可以改回更大的模型，但实时延迟会增加。
 
 ## 6. 常用命令
 
@@ -93,10 +218,10 @@ python tools/generate_video_subtitles.py --media-path videos/input.mp4 --output-
 # 启动完整后端
 docker compose up -d --build
 
-# 查看服务状态
+# 查看容器状态
 docker compose ps
 
-# 看日志
+# 查看最近日志
 docker compose logs -f --tail=200
 
 # 停止服务
@@ -108,107 +233,100 @@ python tools/generate_video_subtitles.py --media-path videos/input.mp4 --output-
 # 批量处理多个视频
 python tools/batch_generate_subtitles.py
 
-# 启动桌面端 Web 开发模式
-cd desktop-ui
-npm install
-npm run dev
+# 跑 1/2/4 路性能压测
+python tools/benchmark_streamsense.py --streams 1 2 4 --video-source /videos/input.mp4
 
-# 启动 Electron 桌面模式
+# 离线桌面端
 cd desktop-ui
+npm run electron:dev
+
+# 大数据实时桌面端
+cd desktop-ui-live
 npm run electron:dev
 ```
 
-## 7. 核心配置
+## 7. 本次性能压测结论
 
-常用配置都在 `.env` 里，第一次运行从模板复制：
-
-```powershell
-Copy-Item .env.example .env
-```
-
-推荐默认值：
+本项目已经完成一次真实 Docker 链路压测，测试对象是完整实时流式链路：
 
 ```text
-VIDEO_SOURCE=/videos/input.mp4
-STREAM_ID=demo-video
-INGEST_SEGMENT_MODE=vad
-ASR_MODEL=large-v3
-ASR_DEVICE=cuda
-ASR_COMPUTE_TYPE=float16
-SENTENCE_BUFFER_ENABLED=true
-HOTWORD_AUTO_DISCOVERY_ENABLED=true
+FFmpeg 实时读视频 -> VAD 切片 -> Kafka -> Flink -> ASR -> Kafka -> API -> Redis/JSONL/指标
 ```
 
-如果显存不够，可以改成：
+| 测试场景 | 成功片段 | 失败片段 | 平均端到端延迟 | P95 | 结论 |
+| --- | ---: | ---: | ---: | ---: | --- |
+| 单路 | 83 | 0 | 296086 ms | 467350 ms | 受历史 Kafka 积压影响，不作为干净基准 |
+| 2 路并发 | 230 | 0 | 4084 ms | 6805 ms | 最适合作为本次报告主结果 |
+| 4 路短冒烟 | 39 | 0 | 9865 ms | 14463 ms | 证明 4 路可跑，但排队延迟明显上升 |
 
-```text
-ASR_MODEL=medium
-ASR_COMPUTE_TYPE=int8_float16
-```
-
-如果没有 GPU：
-
-```text
-ASR_DEVICE=cpu
-ASR_COMPUTE_TYPE=int8
-```
+详细实验过程、指标解释和瓶颈分析见：[docs/本次性能压测实验报告.md](./docs/%E6%9C%AC%E6%AC%A1%E6%80%A7%E8%83%BD%E5%8E%8B%E6%B5%8B%E5%AE%9E%E9%AA%8C%E6%8A%A5%E5%91%8A.md)。
 
 ## 8. 文档导航
 
-- [docs/傻瓜式实现文档.md](./docs/%E5%82%BB%E7%93%9C%E5%BC%8F%E5%AE%9E%E7%8E%B0%E6%96%87%E6%A1%A3.md)：从零开始，按步骤运行项目。
-- [docs/原理解说.md](./docs/%E5%8E%9F%E7%90%86%E8%A7%A3%E8%AF%B4.md)：解释每个模块为什么这样设计。
-- [docs/文档导航.md](./docs/%E6%96%87%E6%A1%A3%E5%AF%BC%E8%88%AA.md)：所有文档的用途说明。
+- [docs/新手上手文档.md](./docs/%E6%96%B0%E6%89%8B%E4%B8%8A%E6%89%8B%E6%96%87%E6%A1%A3.md)：1～2 天读懂项目、跑起来、改一个小功能。
+- [docs/傻瓜式实现文档.md](./docs/%E5%82%BB%E7%93%9C%E5%BC%8F%E5%AE%9E%E7%8E%B0%E6%96%87%E6%A1%A3.md)：从零开始照着跑项目。
+- [docs/原理解说.md](./docs/%E5%8E%9F%E7%90%86%E8%A7%A3%E8%AF%B4.md)：解释 Kafka、Flink、ASR、VAD、关键词分析为什么这样设计。
+- [docs/文档导航.md](./docs/%E6%96%87%E6%A1%A3%E5%AF%BC%E8%88%AA.md)：所有文档的用途和阅读顺序。
+- [desktop-ui/README.md](./desktop-ui/README.md)：离线字幕生成器说明。
+- [desktop-ui-live/README.md](./desktop-ui-live/README.md)：大数据实时字幕版说明。
+- [docs/desktop-ui.md](./docs/desktop-ui.md)：原桌面工作台运行方式。
+- [docs/benchmark.md](./docs/benchmark.md)：压测脚本、输出报告和指标含义。
+- [docs/system_metrics.md](./docs/system_metrics.md)：时间戳字段、监控接口和动态热词池说明。
 - [docs/Git提交与仓库说明.md](./docs/Git%E6%8F%90%E4%BA%A4%E4%B8%8E%E4%BB%93%E5%BA%93%E8%AF%B4%E6%98%8E.md)：哪些文件该提交，哪些文件不能提交。
-- [docs/desktop-ui.md](./docs/desktop-ui.md)：Web/Electron 工作台运行方式。
-- [docs/windows-launcher.md](./docs/windows-launcher.md)：Windows 桌面启动器和打包说明。
-- [优化版课题与实施方案.md](./%E4%BC%98%E5%8C%96%E7%89%88%E8%AF%BE%E9%A2%98%E4%B8%8E%E5%AE%9E%E6%96%BD%E6%96%B9%E6%A1%88.md)：课题包装、技术路线和答辩材料。
 
-## 9. Git 说明
+## 9. Git 提交注意
 
-仓库只提交源码、配置模板和文档。下面这些内容默认不提交：
+仓库只提交源码、配置模板和文档。下面这些内容不要提交：
 
 - `.env`
 - `models/` 模型缓存
 - `videos/` 测试视频
-- 根目录 `input*.mp4`
 - `data/audio/` 音频切片
-- `data/results/` 字幕和报告
-- `desktop-ui/release/`、`desktop-ui/release-*` 打包产物
-- `desktop-ui/dist/`、`desktop-ui/dist-electron/` 构建产物
+- `data/results/` 字幕、报告、压测输出
+- `desktop-ui/node_modules/`
+- `desktop-ui/dist/`、`desktop-ui/dist-electron/`、`desktop-ui/release/`
+- `desktop-ui-live/node_modules/`
+- `desktop-ui-live/dist/`、`desktop-ui-live/dist-electron/`、`desktop-ui-live/release/`
 
-提交前建议执行：
+提交前检查：
 
 ```powershell
 git status --short
 ```
 
-确认没有把视频、模型、字幕结果、exe 安装包提交进去。
+如果看到视频、模型、字幕结果、安装包、`node_modules`，先检查 `.gitignore`，不要直接提交。
 
 ## 10. 常见问题
 
-### Docker 连接失败
+### Docker 拉镜像超时
 
-先启动 Docker Desktop，再执行：
+这通常不是“权限没给”，而是 Docker Hub 网络超时。可以重试，或者先手动拉基础镜像：
 
 ```powershell
-docker compose ps
+docker pull python:3.11-slim
+docker pull apache/flink:1.18.1-scala_2.12-java17
 ```
 
-### 视频没有字幕
+### 实时版提示摄像头/麦克风被拒绝
 
-按顺序检查：
+打开 Windows 设置：
 
-1. `videos/input.mp4` 是否存在。
-2. 视频是否有音轨。
-3. `http://localhost:8001/health` 是否正常。
-4. `http://localhost:8081` 里 Flink 作业是否运行。
-5. `docker compose logs -f --tail=200` 里是否有报错。
+```text
+设置 -> 隐私和安全性 -> 摄像头 / 麦克风
+```
 
-### 首次运行很慢
+确认允许“桌面应用”访问摄像头和麦克风。
 
-第一次使用 `large-v3` 会下载模型到 `models/`。答辩或演示前建议提前跑一次。
+### 实时版半天不出字幕
 
-### 字幕有错字
+优先检查：
+
+1. `docker compose ps` 是否所有核心服务都在运行。
+2. `http://localhost:8001/health` 是否正常。
+3. 麦克风是否真的有声音输入。
+4. `ASR_MODEL` 是否太大，显存不够时先用 `small` 或 `medium`。
+
+### 字幕有错字或幻觉
 
 通用纠错写到：
 
@@ -222,4 +340,4 @@ config/asr_corrections.txt
 config/custom_keywords.txt
 ```
 
-不要把某个视频专属词强行写进默认配置，专属词建议放到 `config/profiles/`。
+实时版还在 `desktop-ui-live/src/App.tsx` 里给 live-ingest 传了一组常用热词，适合课程设计演示时稳定识别“Kafka / Flink / 大数据 / 实时字幕”等词。

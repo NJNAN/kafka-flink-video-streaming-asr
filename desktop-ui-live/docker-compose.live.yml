@@ -1,0 +1,18 @@
+services:
+  live-ingest:
+    build:
+      context: ./desktop-ui-live/live-ingest
+    container_name: streamsense-live-ingest
+    depends_on:
+      topic-init:
+        condition: service_completed_successfully
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      AUDIO_TOPIC: ${AUDIO_TOPIC:-audio-segment}
+      OUTPUT_DIR: /data/audio
+      STREAM_ID: desktop-live
+    volumes:
+      - ./data:/data
+    ports:
+      - "8010:8010"
+    restart: unless-stopped

@@ -129,8 +129,10 @@ recent_keywords: deque[dict[str, Any]] = deque(maxlen=500)
 status = {
     "transcript_count": 0,
     "keyword_event_count": 0,
+    "failed_segment_count": 0,
     "last_message_time_ms": 0,
     "consumer_running": False,
+    "recent_errors": [],
 }
 
 redis_client: redis.Redis | None = None
@@ -142,6 +144,10 @@ sentence_buffers: dict[str, dict[str, Any]] = {}
 sentence_counters: dict[str, int] = {}
 dynamic_hotword_counts: dict[str, Counter[str]] = {}
 dynamic_hotword_meta: dict[str, dict[str, dict[str, Any]]] = {}
+dynamic_hotword_windows: dict[str, deque[dict[str, Any]]] = {}
+confirmed_hotwords: dict[str, set[str]] = {}
+ignored_hotwords: dict[str, set[str]] = {}
+hotword_corrections: dict[str, dict[str, str]] = {}
 
 
 class HotwordDiscoverRequest(BaseModel):
@@ -150,6 +156,14 @@ class HotwordDiscoverRequest(BaseModel):
     run_id: str = ""
     top_k: int = 50
     min_count: int = 1
+
+
+class HotwordActionRequest(BaseModel):
+    word: str
+    stream_id: str = "demo-video"
+    run_id: str = ""
+    action: str
+    correction: str = ""
 
 
 def now_ms() -> int:
@@ -547,6 +561,167 @@ def tail_jsonl(path_value: Path, limit: int) -> list[dict[str, Any]]:
     return items
 
 
+def percentile(values: list[float], percent: float) -> float:
+    if not values:
+        return 0.0
+    ordered = sorted(values)
+    index = int(round((len(ordered) - 1) * percent))
+    return float(ordered[max(0, min(index, len(ordered) - 1))])
+
+
+def numeric_ms(item: dict[str, Any], *keys: str) -> int:
+    for key in keys:
+        value = item.get(key)
+        if isinstance(value, (int, float)):
+            return int(value)
+        if isinstance(value, str) and value.strip().isdigit():
+            return int(value)
+    return 0
+
+
+def sorted_segments(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return sorted(
+        items,
+        key=lambda item: (
+            str(item.get("stream_id", "")),
+            numeric_ms(item, "start_time_ms"),
+            str(item.get("segment_id", "")),
+        ),
+    )
+
+
+def load_transcript_history(limit: int = 5000, stream_id: str | None = None) -> list[dict[str, Any]]:
+    file_items = tail_jsonl(RESULT_DIR / "transcripts.jsonl", limit)
+    memory_items = list(recent_transcripts)
+    seen: set[str] = set()
+    merged: list[dict[str, Any]] = []
+    for item in file_items + memory_items:
+        if stream_id and item.get("stream_id") != stream_id:
+            continue
+        key = str(item.get("segment_id", "")) or json.dumps(item, ensure_ascii=False, sort_keys=True)
+        if key in seen:
+            continue
+        seen.add(key)
+        merged.append(item)
+    return sorted_segments(merged)[-limit:]
+
+
+def stream_ids_from_history() -> list[str]:
+    ids = {str(item.get("stream_id", "unknown")) for item in load_transcript_history() if item.get("stream_id")}
+    ids.update(str(key).split(":", 1)[0] for key in dynamic_hotword_meta.keys() if key)
+    return sorted(ids)
+
+
+def stream_hotwords(stream_id: str) -> list[dict[str, Any]]:
+    items: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for session_id in sorted(dynamic_hotword_meta.keys()):
+        if session_id != stream_id and not session_id.startswith(f"{stream_id}:"):
+            continue
+        for item in active_hotwords_for_session(session_id):
+            word = str(item.get("word", ""))
+            if word and word not in seen:
+                seen.add(word)
+                items.append(item)
+    items.sort(key=lambda item: (-float(item.get("score", item.get("count", 0))), item.get("word", "")))
+    return items
+
+
+def build_metrics_payload(stream_id: str | None = None) -> dict[str, Any]:
+    items = load_transcript_history(stream_id=stream_id)
+    end_to_end = [float(numeric_ms(item, "end_to_end_time_ms")) for item in items if numeric_ms(item, "end_to_end_time_ms")]
+    asr_times = [
+        float(numeric_ms(item, "asr_inference_time_ms", "inference_time_ms", "asr_total_time_ms"))
+        for item in items
+        if numeric_ms(item, "asr_inference_time_ms", "inference_time_ms", "asr_total_time_ms")
+    ]
+    kafka_flink = [
+        float(numeric_ms(item, "kafka_flink_dispatch_time_ms"))
+        for item in items
+        if numeric_ms(item, "kafka_flink_dispatch_time_ms")
+    ]
+    api_times = [
+        float(numeric_ms(item, "api_aggregation_time_ms"))
+        for item in items
+        if numeric_ms(item, "api_aggregation_time_ms")
+    ]
+    redis_times = [
+        float(numeric_ms(item, "redis_write_time_ms"))
+        for item in items
+        if numeric_ms(item, "redis_write_time_ms")
+    ]
+    created = [numeric_ms(item, "created_at", "audio_created_at_ms") for item in items]
+    written = [numeric_ms(item, "result_written_at") for item in items]
+    wall_ms = max(written) - min(created) if created and written else 0
+    throughput = round(len(items) / (wall_ms / 1000), 3) if wall_ms > 0 else 0.0
+    pending = sum(1 for buffer in sentence_buffers.values() if (not stream_id) or str(buffer.get("template", {}).get("stream_id", "")) == stream_id)
+    all_hotwords = []
+    for sid in (stream_ids_from_history() if stream_id is None else [stream_id]):
+        all_hotwords.extend(stream_hotwords(sid))
+    all_hotwords.sort(key=lambda item: (-float(item.get("score", item.get("count", 0))), item.get("word", "")))
+    return {
+        "status": "ok",
+        "stream_id": stream_id or "",
+        "active_stream_count": len(stream_ids_from_history()),
+        "total_segments": len(items),
+        "success_segments": len(items),
+        "failed_segments": int(status.get("failed_segment_count", 0)),
+        "average_end_to_end_latency_ms": round(sum(end_to_end) / len(end_to_end), 2) if end_to_end else 0,
+        "p50_latency_ms": round(percentile(end_to_end, 0.50), 2),
+        "p95_latency_ms": round(percentile(end_to_end, 0.95), 2),
+        "p99_latency_ms": round(percentile(end_to_end, 0.99), 2),
+        "asr_average_time_ms": round(sum(asr_times) / len(asr_times), 2) if asr_times else 0,
+        "kafka_flink_average_dispatch_ms": round(sum(kafka_flink) / len(kafka_flink), 2) if kafka_flink else 0,
+        "api_average_aggregation_ms": round(sum(api_times) / len(api_times), 2) if api_times else 0,
+        "redis_average_write_ms": round(sum(redis_times) / len(redis_times), 2) if redis_times else 0,
+        "pending_segments": pending,
+        "throughput_segments_per_second": throughput,
+        "recent_errors": list(status.get("recent_errors", []))[-10:],
+        "hotwords_top10": all_hotwords[:10],
+    }
+
+
+def format_srt_time(ms: int) -> str:
+    hours = ms // 3_600_000
+    ms %= 3_600_000
+    minutes = ms // 60_000
+    ms %= 60_000
+    seconds = ms // 1000
+    millis = ms % 1000
+    return f"{hours:02d}:{minutes:02d}:{seconds:02d},{millis:03d}"
+
+
+def write_stream_export(stream_id: str, fmt: str, items: list[dict[str, Any]]) -> Path:
+    export_dir = RESULT_DIR / "stream-exports" / stream_id
+    export_dir.mkdir(parents=True, exist_ok=True)
+    fmt = fmt.lower()
+    if fmt not in {"json", "srt", "vtt", "txt"}:
+        raise HTTPException(status_code=400, detail="format must be json, srt, vtt, or txt")
+    path_value = export_dir / f"{stream_id}.{fmt}"
+    if fmt == "json":
+        path_value.write_text(json.dumps({"stream_id": stream_id, "segments": items}, ensure_ascii=False, indent=2), encoding="utf-8")
+        return path_value
+    if fmt == "txt":
+        path_value.write_text("\n".join(str(item.get("text", "")) for item in items) + "\n", encoding="utf-8")
+        return path_value
+    blocks = []
+    if fmt == "vtt":
+        blocks.append("WEBVTT\n")
+    for index, item in enumerate(items, start=1):
+        start_ms = numeric_ms(item, "start_time_ms")
+        end_ms = numeric_ms(item, "end_time_ms") or start_ms + 2500
+        start = format_srt_time(start_ms)
+        end = format_srt_time(end_ms)
+        if fmt == "vtt":
+            start = start.replace(",", ".")
+            end = end.replace(",", ".")
+            blocks.append(f"{start} --> {end}\n{item.get('text', '')}")
+        else:
+            blocks.append(f"{index}\n{start} --> {end}\n{item.get('text', '')}")
+    path_value.write_text("\n\n".join(blocks) + "\n", encoding="utf-8-sig" if fmt == "srt" else "utf-8")
+    return path_value
+
+
 def write_dynamic_hotword_state(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -557,22 +732,27 @@ async def save_to_file(transcript: dict[str, Any], keyword_event: dict[str, Any]
     await asyncio.to_thread(append_jsonl, RESULT_DIR / "keyword_events.jsonl", keyword_event)
 
 
-async def save_to_redis(transcript: dict[str, Any], keyword_event: dict[str, Any]) -> None:
+async def save_to_redis(transcript: dict[str, Any], keyword_event: dict[str, Any]) -> int:
     """把结果存到 Redis，Dashboard 查询会更稳定。"""
     if redis_client is None:
-        return
+        return 0
 
+    started_at = now_ms()
     session_id = session_id_from_payload(transcript)
     transcript_key = f"stream:{session_id}:transcripts"
+    stream_transcript_key = f"stream_id:{transcript.get('stream_id', 'unknown')}:transcripts"
     keyword_key = f"stream:{session_id}:keyword_events"
 
     await redis_client.lpush(transcript_key, json.dumps(transcript, ensure_ascii=False))
     await redis_client.ltrim(transcript_key, 0, 199)
+    await redis_client.lpush(stream_transcript_key, json.dumps(transcript, ensure_ascii=False))
+    await redis_client.ltrim(stream_transcript_key, 0, 499)
     await redis_client.zadd(
         keyword_key,
         {json.dumps(keyword_event, ensure_ascii=False): keyword_event.get("created_at_ms", now_ms())},
     )
     await redis_client.zremrangebyrank(keyword_key, 0, -501)
+    return now_ms() - started_at
 
 
 async def publish_keyword_event(keyword_event: dict[str, Any]) -> None:
@@ -652,8 +832,20 @@ def active_hotwords_for_session(session_id: str) -> list[dict[str, Any]]:
     min_count = int_env("HOTWORD_AUTO_ADD_MIN_COUNT", 5)
     max_words = int_env("HOTWORD_MAX_WORDS", 120)
     details = list(dynamic_hotword_meta.get(session_id, {}).values())
-    details = [dict(item) for item in details if int(item.get("count", 0)) >= min_count]
-    details.sort(key=lambda item: (-int(item.get("count", 0)), item.get("word", "")))
+    ignored = ignored_hotwords.get(session_id, set())
+    confirmed = confirmed_hotwords.get(session_id, set())
+    filtered = []
+    for item in details:
+        word = str(item.get("word", ""))
+        if word in ignored:
+            continue
+        copy_item = dict(item)
+        if word in confirmed:
+            copy_item["confirmed"] = True
+        if int(copy_item.get("count", 0)) >= min_count or copy_item.get("confirmed"):
+            filtered.append(copy_item)
+    details = filtered
+    details.sort(key=lambda item: (-float(item.get("score", item.get("count", 0))), item.get("word", "")))
     return details[:max_words]
 
 
@@ -661,7 +853,13 @@ def build_dynamic_hotword_state() -> dict[str, Any]:
     sessions: dict[str, list[dict[str, Any]]] = {}
     for session_id in sorted(dynamic_hotword_meta.keys()):
         sessions[session_id] = active_hotwords_for_session(session_id)
-    return {"updated_at_ms": now_ms(), "sessions": sessions}
+    return {
+        "updated_at_ms": now_ms(),
+        "sessions": sessions,
+        "confirmed": {key: sorted(value) for key, value in confirmed_hotwords.items()},
+        "blocklist": {key: sorted(value) for key, value in ignored_hotwords.items()},
+        "corrections": hotword_corrections,
+    }
 
 
 async def persist_dynamic_hotwords() -> None:
@@ -680,6 +878,13 @@ def load_dynamic_hotwords() -> None:
         return
 
     sessions = payload.get("sessions", {}) or payload.get("streams", {})
+    for session_id, words in (payload.get("confirmed", {}) or {}).items():
+        confirmed_hotwords[session_id] = {str(word) for word in words if str(word).strip()}
+    for session_id, words in (payload.get("blocklist", {}) or {}).items():
+        ignored_hotwords[session_id] = {str(word) for word in words if str(word).strip()}
+    for session_id, mapping in (payload.get("corrections", {}) or {}).items():
+        if isinstance(mapping, dict):
+            hotword_corrections[session_id] = {str(k): str(v) for k, v in mapping.items()}
     for session_id, items in sessions.items():
         counter = Counter()
         meta: dict[str, dict[str, Any]] = {}
@@ -692,9 +897,11 @@ def load_dynamic_hotwords() -> None:
             meta[word] = {
                 "word": word,
                 "count": count,
+                "score": float(item.get("score", count)),
                 "first_seen_ms": int(item.get("first_seen_ms", now_ms())),
                 "last_seen_ms": int(item.get("last_seen_ms", now_ms())),
                 "source": str(item.get("source", "auto_discovery")),
+                "confirmed": bool(item.get("confirmed", word in confirmed_hotwords.get(session_id, set()))),
             }
             jieba.add_word(word)
         if counter:
@@ -747,22 +954,50 @@ async def maybe_learn_hotwords(transcript: dict[str, Any]) -> None:
     before_active = {item["word"] for item in active_hotwords_for_session(session_id)}
     counter = dynamic_hotword_counts.setdefault(session_id, Counter())
     meta = dynamic_hotword_meta.setdefault(session_id, {})
+    window = dynamic_hotword_windows.setdefault(session_id, deque(maxlen=int_env("HOTWORD_RECENT_WINDOW_SEGMENTS", 120)))
     candidate_limit = int_env("HOTWORD_DISCOVERY_TOP_K", 30)
     candidates = discover_hotword_candidates(text, top_k=candidate_limit, min_count=1)
 
     if not candidates:
         return
 
+    current_ms = now_ms()
+    window.append({"created_at_ms": current_ms, "text": text, "avg_logprob": avg_logprob})
+    recent_text = "\n".join(
+        str(item.get("text", ""))
+        for item in window
+        if current_ms - int(item.get("created_at_ms", current_ms)) <= int_env("HOTWORD_RECENT_WINDOW_MS", 300000)
+    )
+    recent_counts = Counter()
+    for item in discover_hotword_candidates(recent_text, top_k=candidate_limit * 2, min_count=1):
+        recent_counts[str(item["word"])] = int(item.get("count", 1))
+
     for candidate in candidates:
         word = candidate["word"]
+        if word in ignored_hotwords.get(session_id, set()):
+            continue
         counter[word] += int(candidate.get("count", 1))
         existing = meta.get(word, {})
+        recency_bonus = 1.0
+        confidence_bonus = 1.0
+        if avg_logprob is not None:
+            confidence_bonus = max(0.2, min(1.5, 1.0 + float(avg_logprob)))
+        confirmed_bonus = 2.0 if word in confirmed_hotwords.get(session_id, set()) else 1.0
+        score = (
+            float(counter[word])
+            + float(recent_counts.get(word, 0)) * 0.7
+            + recency_bonus
+        ) * confidence_bonus * confirmed_bonus
         meta[word] = {
             "word": word,
             "count": int(counter[word]),
+            "recent_count": int(recent_counts.get(word, 0)),
+            "score": round(score, 4),
             "first_seen_ms": int(existing.get("first_seen_ms", now_ms())),
-            "last_seen_ms": now_ms(),
+            "last_seen_ms": current_ms,
+            "avg_logprob": avg_logprob,
             "source": "auto_discovery",
+            "confirmed": word in confirmed_hotwords.get(session_id, set()),
         }
         jieba.add_word(word)
 
@@ -774,6 +1009,8 @@ async def maybe_learn_hotwords(transcript: dict[str, Any]) -> None:
 
 
 async def handle_ready_transcript(transcript: dict[str, Any]) -> None:
+    api_received_at = int(transcript.get("api_received_at", now_ms()))
+    transcript["api_received_at"] = api_received_at
     keyword_event = build_keyword_event(transcript)
     recent_transcripts.appendleft(transcript)
     recent_keywords.appendleft(keyword_event)
@@ -782,10 +1019,31 @@ async def handle_ready_transcript(transcript: dict[str, Any]) -> None:
     status["keyword_event_count"] += 1
     status["last_message_time_ms"] = now_ms()
 
-    await save_to_redis(transcript, keyword_event)
+    redis_write_time_ms = await save_to_redis(transcript, keyword_event)
+    transcript["redis_write_time_ms"] = redis_write_time_ms
+    keyword_event["redis_write_time_ms"] = redis_write_time_ms
+    transcript["api_aggregation_time_ms"] = now_ms() - api_received_at
+    transcript["result_written_at"] = now_ms()
+    created_at = numeric_ms(transcript, "created_at", "audio_created_at_ms")
+    if created_at:
+        transcript["end_to_end_time_ms"] = transcript["result_written_at"] - created_at
     await save_to_file(transcript, keyword_event)
     await publish_keyword_event(keyword_event)
     await maybe_learn_hotwords(transcript)
+
+
+async def handle_failed_transcript(transcript: dict[str, Any]) -> None:
+    status["failed_segment_count"] = int(status.get("failed_segment_count", 0)) + 1
+    error_item = {
+        "segment_id": transcript.get("segment_id", ""),
+        "stream_id": transcript.get("stream_id", ""),
+        "error": str(transcript.get("error", ""))[:500],
+        "created_at_ms": now_ms(),
+    }
+    recent_errors = list(status.get("recent_errors", []))
+    recent_errors.append(error_item)
+    status["recent_errors"] = recent_errors[-20:]
+    await asyncio.to_thread(append_jsonl, RESULT_DIR / "failed_segments.jsonl", {**transcript, **error_item})
 
 
 async def flush_stale_sentence_buffers() -> None:
@@ -836,7 +1094,9 @@ async def consume_transcripts() -> None:
 
             async for message in consumer:
                 transcript = json.loads(message.value.decode("utf-8"))
+                transcript["api_received_at"] = now_ms()
                 if transcript.get("status") != "ok":
+                    await handle_failed_transcript(transcript)
                     continue
                 if not transcript.get("text", "").strip():
                     continue
@@ -991,7 +1251,7 @@ async def transcripts(stream_id: str | None = None, limit: int = Query(default=5
     data = list(recent_transcripts)
     if stream_id:
         data = [item for item in data if item.get("stream_id") == stream_id]
-    return data[:limit]
+    return sorted_segments(data)[:limit]
 
 
 @app.get("/api/keywords")
@@ -1000,6 +1260,111 @@ async def keywords(stream_id: str | None = None, limit: int = Query(default=50, 
     if stream_id:
         data = [item for item in data if item.get("stream_id") == stream_id]
     return data[:limit]
+
+
+@app.get("/api/metrics")
+async def metrics(stream_id: str | None = None) -> dict[str, Any]:
+    return build_metrics_payload(stream_id=stream_id)
+
+
+@app.get("/api/streams")
+async def streams() -> dict[str, Any]:
+    stream_items = []
+    for stream_id in stream_ids_from_history():
+        stream_items.append(
+            {
+                "stream_id": stream_id,
+                "metrics": build_metrics_payload(stream_id=stream_id),
+                "hotwords": stream_hotwords(stream_id)[:10],
+            }
+        )
+    return {"status": "ok", "streams": stream_items}
+
+
+@app.get("/api/streams/{stream_id}")
+async def stream_detail(stream_id: str) -> dict[str, Any]:
+    segments = load_transcript_history(stream_id=stream_id, limit=1000)
+    return {
+        "status": "ok",
+        "stream_id": stream_id,
+        "metrics": build_metrics_payload(stream_id=stream_id),
+        "latest_segment": segments[-1] if segments else None,
+        "segment_count": len(segments),
+    }
+
+
+@app.get("/api/streams/{stream_id}/segments")
+async def stream_segments(stream_id: str, limit: int = Query(default=200, ge=1, le=2000)) -> list[dict[str, Any]]:
+    return load_transcript_history(stream_id=stream_id, limit=limit)
+
+
+@app.get("/api/streams/{stream_id}/hotwords")
+async def stream_hotword_endpoint(stream_id: str) -> dict[str, Any]:
+    return {"status": "ok", "stream_id": stream_id, "hotwords": stream_hotwords(stream_id)}
+
+
+@app.get("/api/streams/{stream_id}/export")
+async def stream_export(stream_id: str, format: str = Query(default="json")) -> FileResponse:
+    segments = load_transcript_history(stream_id=stream_id, limit=5000)
+    if not segments:
+        raise HTTPException(status_code=404, detail="stream has no segments")
+    path_value = write_stream_export(stream_id, format, segments)
+    return FileResponse(path_value)
+
+
+@app.delete("/api/streams/{stream_id}/segments")
+async def clear_stream_segments(stream_id: str) -> dict[str, Any]:
+    """清理某一路实时字幕的内存、Redis 和 JSONL 历史，供直播演示重新开始。"""
+    global recent_transcripts, recent_keywords
+
+    before_transcripts = len(recent_transcripts)
+    before_keywords = len(recent_keywords)
+    recent_transcripts = deque(
+        [item for item in recent_transcripts if item.get("stream_id") != stream_id],
+        maxlen=recent_transcripts.maxlen,
+    )
+    recent_keywords = deque(
+        [item for item in recent_keywords if item.get("stream_id") != stream_id],
+        maxlen=recent_keywords.maxlen,
+    )
+
+    deleted_redis_keys = 0
+    if redis_client is not None:
+        keys = await redis_client.keys(f"stream_id:{stream_id}:*")
+        for key in keys:
+            deleted_redis_keys += int(await redis_client.delete(key))
+
+    def filter_jsonl(path_value: Path) -> int:
+        if not path_value.exists():
+            return 0
+        kept = []
+        removed = 0
+        for line in path_value.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            try:
+                item = json.loads(line)
+            except json.JSONDecodeError:
+                kept.append(line)
+                continue
+            if item.get("stream_id") == stream_id:
+                removed += 1
+            else:
+                kept.append(line)
+        path_value.write_text("\n".join(kept) + ("\n" if kept else ""), encoding="utf-8")
+        return removed
+
+    removed_transcript_file = await asyncio.to_thread(filter_jsonl, RESULT_DIR / "transcripts.jsonl")
+    removed_keyword_file = await asyncio.to_thread(filter_jsonl, RESULT_DIR / "keyword_events.jsonl")
+    return {
+        "status": "ok",
+        "stream_id": stream_id,
+        "removed_memory_transcripts": before_transcripts - len(recent_transcripts),
+        "removed_memory_keywords": before_keywords - len(recent_keywords),
+        "deleted_redis_keys": deleted_redis_keys,
+        "removed_transcript_file_rows": removed_transcript_file,
+        "removed_keyword_file_rows": removed_keyword_file,
+    }
 
 
 @app.get("/api/hotwords")
@@ -1056,4 +1421,69 @@ async def discover_hotwords(request: HotwordDiscoverRequest) -> dict[str, Any]:
         "run_id": request.run_id,
         "session_id": session_id,
         "hotwords": items[: request.top_k],
+    }
+
+
+@app.post("/api/hotwords/action")
+async def hotword_action(request: HotwordActionRequest) -> dict[str, Any]:
+    word = request.word.strip()
+    if not word:
+        raise HTTPException(status_code=400, detail="word is required")
+    session_id = build_session_id(request.stream_id, request.run_id)
+    action = request.action.strip().lower()
+    meta = dynamic_hotword_meta.setdefault(session_id, {})
+    counter = dynamic_hotword_counts.setdefault(session_id, Counter())
+
+    if action == "confirm":
+        confirmed_hotwords.setdefault(session_id, set()).add(word)
+        ignored_hotwords.setdefault(session_id, set()).discard(word)
+        counter[word] = max(counter[word], int_env("HOTWORD_AUTO_ADD_MIN_COUNT", 5))
+        existing = meta.get(word, {})
+        meta[word] = {
+            "word": word,
+            "count": int(counter[word]),
+            "recent_count": int(existing.get("recent_count", 0)),
+            "score": float(existing.get("score", counter[word])) + 5.0,
+            "first_seen_ms": int(existing.get("first_seen_ms", now_ms())),
+            "last_seen_ms": now_ms(),
+            "source": "user_confirmed",
+            "confirmed": True,
+        }
+        jieba.add_word(word)
+    elif action == "ignore":
+        ignored_hotwords.setdefault(session_id, set()).add(word)
+        confirmed_hotwords.setdefault(session_id, set()).discard(word)
+    elif action == "correct":
+        correction = request.correction.strip()
+        if not correction:
+            raise HTTPException(status_code=400, detail="correction is required for correct action")
+        ignored_hotwords.setdefault(session_id, set()).add(word)
+        confirmed_hotwords.setdefault(session_id, set()).add(correction)
+        hotword_corrections.setdefault(session_id, {})[word] = correction
+        counter[correction] = max(counter[correction], int_env("HOTWORD_AUTO_ADD_MIN_COUNT", 5))
+        meta[correction] = {
+            "word": correction,
+            "count": int(counter[correction]),
+            "recent_count": 0,
+            "score": float(counter[correction]) + 5.0,
+            "first_seen_ms": now_ms(),
+            "last_seen_ms": now_ms(),
+            "source": "user_corrected",
+            "confirmed": True,
+            "corrected_from": word,
+        }
+        jieba.add_word(correction)
+    else:
+        raise HTTPException(status_code=400, detail="action must be confirm, ignore, or correct")
+
+    await persist_dynamic_hotwords()
+    await publish_hotword_update(request.stream_id, request.run_id, session_id, active_hotwords_for_session(session_id))
+    return {
+        "status": "ok",
+        "stream_id": request.stream_id,
+        "run_id": request.run_id,
+        "session_id": session_id,
+        "hotwords": active_hotwords_for_session(session_id),
+        "blocklist": sorted(ignored_hotwords.get(session_id, set())),
+        "corrections": hotword_corrections.get(session_id, {}),
     }

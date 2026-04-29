@@ -196,6 +196,7 @@ services:
       TRANSCRIPT_TOPIC: ${TRANSCRIPT_TOPIC:-transcription-result}
       ASR_URL: http://asr:8000
       ASR_TIMEOUT_SECONDS: 120
+      FLINK_JOB_PARALLELISM: ${FLINK_JOB_PARALLELISM:-1}
     volumes:
       - ./data:/data
     command: >
