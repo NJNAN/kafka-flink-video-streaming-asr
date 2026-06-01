@@ -1,0 +1,10 @@
+{
+  "stream_id": "course-demo",
+  "transcript_count": 3,
+  "keyword_event_count": 3,
+  "failed_segment_count": 0,
+  "average_asr_inference_time_ms": 1220,
+  "average_end_to_end_time_ms": 1520,
+  "p95_end_to_end_time_ms": 1590,
+  "note": "脱敏静态示例，用于说明系统输出结构。"
+}

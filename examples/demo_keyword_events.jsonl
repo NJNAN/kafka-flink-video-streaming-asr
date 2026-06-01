@@ -1,0 +1,3 @@
+{"stream_id":"course-demo","segment_id":"course-demo-sentence-000001","event_type":"custom_hit","keywords":[{"word":"Kafka","score":1.0,"source":"custom"},{"word":"实时数据","score":1.0,"source":"custom"},{"word":"作用","score":0.52,"source":"textrank"}]}
+{"stream_id":"course-demo","segment_id":"course-demo-sentence-000002","event_type":"custom_hit","keywords":[{"word":"Flink","score":1.0,"source":"custom"},{"word":"消息队列","score":1.0,"source":"custom"},{"word":"音频片段","score":0.67,"source":"textrank"}]}
+{"stream_id":"course-demo","segment_id":"course-demo-sentence-000003","event_type":"custom_hit","keywords":[{"word":"语音识别","score":1.0,"source":"custom"},{"word":"关键词","score":1.0,"source":"custom"},{"word":"延迟指标","score":0.58,"source":"textrank"}]}

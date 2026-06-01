@@ -27,6 +27,7 @@ env/
 .idea/
 *.code-workspace
 .claude/
+.playwright-mcp/
 
 # ------------------------------
 # OS files
@@ -114,3 +115,11 @@ pnpm-debug.log*
 playwright-report/
 test-results/
 coverage/
+
+# ------------------------------
+# Personal course-delivery files
+# ------------------------------
+/*.docx
+/docs/course-report-ppt/
+/docs/期末作品报告填写稿.md
+/tools/create_course_report_ppt.mjs

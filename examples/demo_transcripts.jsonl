@@ -1,0 +1,3 @@
+{"stream_id":"course-demo","segment_id":"course-demo-sentence-000001","text":"本节课介绍 Kafka 在实时数据处理中的作用。","start_time_ms":0,"end_time_ms":5200,"sentence_level":true,"asr_inference_time_ms":1180,"end_to_end_time_ms":1460,"status":"ok"}
+{"stream_id":"course-demo","segment_id":"course-demo-sentence-000002","text":"音频片段会先进入消息队列，再由 Flink 持续消费。","start_time_ms":5200,"end_time_ms":10800,"sentence_level":true,"asr_inference_time_ms":1270,"end_to_end_time_ms":1590,"status":"ok"}
+{"stream_id":"course-demo","segment_id":"course-demo-sentence-000003","text":"语音识别完成后，系统会输出字幕、关键词和延迟指标。","start_time_ms":10800,"end_time_ms":16400,"sentence_level":true,"asr_inference_time_ms":1210,"end_to_end_time_ms":1510,"status":"ok"}

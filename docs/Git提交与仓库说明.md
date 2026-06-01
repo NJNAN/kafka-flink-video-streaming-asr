@@ -13,6 +13,7 @@
 - `tools/`
 - `config/`
 - `docs/`
+- `examples/`
 - `README.md`
 - `docker-compose.yml`
 - `.env.example`
@@ -35,6 +36,8 @@
 - `desktop-ui/dist/`、`desktop-ui/dist-electron/` 前端构建产物
 - `desktop-ui/release/`、`desktop-ui/release-*`、`desktop-ui/release-fresh/` Electron 打包产物
 - `.claude/`、`.vscode/`、`.idea/` 等本机工具配置
+- `.playwright-mcp/` 浏览器自动化调试日志
+- 根目录个人课程报告 `*.docx`
 - 各类缓存和日志文件
 
 原因很直接：
@@ -75,7 +78,7 @@ git commit -m "chore: initialize project repository"
 
 ```powershell
 git status
-git add README.md docs services flink tools config docker-compose.yml .gitignore .gitattributes .env.example
+git add README.md docs examples services flink tools config docker-compose.yml .gitignore .gitattributes .env.example
 git commit -m "feat: describe your change"
 ```
 
