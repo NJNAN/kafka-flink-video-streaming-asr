@@ -412,6 +412,7 @@ FFmpeg 实时读取 -> VAD -> Kafka -> Flink -> ASR -> Kafka -> API -> Redis/JSO
 | [docs/自动化验收说明.md](./docs/自动化验收说明.md) | 冒烟测试检查项。 |
 | [docs/结果数据库说明.md](./docs/结果数据库说明.md) | Redis、JSONL 和 SQLite 的分工。 |
 | [docs/system_metrics.md](./docs/system_metrics.md) | 指标字段和 API。 |
+| [docs/问题解决与拓展路线.md](./docs/问题解决与拓展路线.md) | 开发中遇到的问题、解决方法、当前不足和后续路线。 |
 | [docs/Git提交与仓库说明.md](./docs/Git提交与仓库说明.md) | 公开仓库文件边界。 |
 
 ## 12. GitHub 发布说明
@@ -439,7 +440,34 @@ git status --short
 git ls-files
 ```
 
-## 13. 当前限制
+## 13. 问题、改进与拓展
+
+项目开发过程中，重点处理了实时性、字幕质量、领域词识别、故障恢复和仓库公开发布等问题。
+
+| 遇到的问题 | 已采用的解决方法 | 当前效果 |
+| --- | --- | --- |
+| 固定长度切片容易截断句子 | 使用 VAD 按语音停顿动态切片，并在 API 层增加句子缓冲。 | Dashboard 字幕更接近自然句子。 |
+| 通用 ASR 容易误识别专业词 | 增加自定义关键词、纠错表和动态热词更新 Topic。 | 可针对 Kafka、Flink 等领域词持续优化。 |
+| 静音、噪声可能触发错误字幕 | 增加能量过滤、无语音概率阈值、重复模式过滤和字幕补漏检查。 | 降低无效字幕和漏段概率。 |
+| ASR 偶发失败会造成片段丢失 | Flink 调用 ASR 时增加重试，并将失败结果写入 `transcription-failed`。 | 失败片段可以追踪和复查。 |
+| Docker 恢复后 Kafka 可能启动失败 | 等待 Zookeeper 旧 broker 临时节点过期后重启 Kafka，再重新运行 Topic 初始化。 | 已在本机恢复并通过 `6/6` 冒烟测试。 |
+| 模型、视频和运行结果体积过大 | 使用 `.gitignore` 排除本地模型、媒体、音频切片、结果和密钥。 | GitHub 仓库只保留源码、文档和脱敏示例。 |
+
+后续拓展路线：
+
+```mermaid
+flowchart LR
+    Current["当前版本<br/>单机 Kafka-Flink + 本地 ASR"]
+    Short["短期<br/>补充测试、完善指标、优化冷启动"]
+    Mid["中期<br/>说话人分离、RTSP 接入、可视化报告"]
+    Long["长期<br/>多节点 Flink、对象存储、模型服务化"]
+
+    Current --> Short --> Mid --> Long
+```
+
+详细说明见 [docs/问题解决与拓展路线.md](./docs/问题解决与拓展路线.md)。
+
+## 14. 当前限制
 
 - 默认 Docker Compose 配置使用 NVIDIA GPU；CPU 环境需要调整 `.env`。
 - 首次运行需要下载 faster-whisper 模型。
