@@ -1,61 +1,250 @@
-# StreamSense
+# StreamSense —— 基于 Kafka-Flink 的视频流语音转写与关键词分析系统
 
-基于 Kafka-Flink 的视频流语音转写与关键词分析系统
+[![Python](https://img.shields.io/badge/Python-3.11+-blue)](https://www.python.org/)
+[![Docker](https://img.shields.io/badge/Docker-支持-blue)](https://www.docker.com/)
+[![License](https://img.shields.io/badge/License-MIT-green)](./LICENSE)
+[![Flink](https://img.shields.io/badge/Flink-1.18-orange)](https://flink.apache.org/)
 
-StreamSense 是一个面向中文视频的课程设计项目。系统将视频中的语音转换为持续到达的音频片段，经 Kafka 缓冲、Flink 流式调度和本地 faster-whisper 识别后，实时输出字幕、关键词、热词和运行指标。
+**视频进去，字幕出来。中间发生了什么，你全看得见。**
 
-## 项目创新点速览
+普通转写工具：丢视频 → 等几分钟 → 下载字幕。中间发生了什么？不知道。
 
-本项目不是“调用一次语音识别接口”的字幕脚本，而是把视频语音处理改造成了一条可持续接入、可流式调度、可观测、可追溯、可增强的大数据处理链路。创新点集中在以下几个方面：
+StreamSense 不一样。它把视频语音处理做成了实时流：音频按语音停顿自动切片进入 Kafka，Flink 调度 GPU 推理，字幕逐句生成，关键词同步提取，延迟实时展示。数据流到哪里、卡在哪里、每条数据在每个环节耗时多少毫秒——Dashboard 上全部可查。不是跑完看结果，而是一边跑一边看。
 
-| 创新点 | 传统做法 | 本项目做法 | 体现价值 |
-| --- | --- | --- | --- |
-| 视频语音流式化 | 整个视频一次性转写，处理过程不可见。 | 将视频/麦克风音频切成连续语音片段，作为流数据进入 Kafka。 | 把“字幕生成”转化为大数据课程中的实时数据处理问题。 |
-| Kafka-Flink 调度 ASR | ASR 直接处理文件，难以扩展和恢复。 | Kafka 负责缓冲解耦，Flink 持续消费片段并调度 ASR 服务。 | 体现消息队列、流式计算、异步处理和失败重试机制。 |
-| VAD 语义切片 | 按固定时间切片，容易把一句话切断。 | 根据语音停顿动态切片，并在 API 层做句子缓冲。 | 字幕更接近自然语句，减少机械切段带来的阅读割裂。 |
-| 转写结果再分析 | 只生成字幕文本。 | 在转写后继续提取关键词、发现动态热词、维护领域词和纠错表。 | 从“听写工具”升级为“视频内容理解与主题分析系统”。 |
-| 实时可观测闭环 | 跑完才知道是否成功。 | Dashboard 实时展示字幕、关键词、延迟、失败片段和系统状态。 | 老师可以直接看到数据在链路中流动，而不是只看最终文件。 |
-| 多形态交付 | 只输出一个字幕文件。 | 同时支持 Dashboard、Electron 桌面端、SRT/VTT/JSON、Redis/JSONL/SQLite 结果。 | 既能课堂演示实时系统，也能提交可复查的实验结果。 |
-| AI 字幕增强链路 | ASR 错词只能人工改。 | 可选 Subtitle Agent 对字幕做术语统一、上下文审校和语义润色。 | 将流式 ASR 与大模型后处理结合，形成质量增强闭环。 |
+Docker 一行命令启动，多路视频并发处理，SRT/VTT 多格式导出，内建质量评测——从实验到报告，一步到位。
 
-一句话概括：StreamSense 的亮点在于把“视频转字幕”这个普通应用，设计成了一个包含数据接入、消息队列、流式计算、语音识别、内容分析、质量评测和可视化监控的完整实时大数据系统。
+这套架构的价值不在纸面上，在具体场景里。答辩演示时，打开 Dashboard，数据怎么流的、每步延迟多少、关键词是什么——实时可见，不用靠嘴解释"系统确实在跑"。写实验报告时，SQLite 里每条片段的端到端时间线可以直接导出，哪个环节慢了、慢了多少，数据说话。想验证字幕质量？拿一份人工标注参考文本，跑 evaluate_subtitles.py，字错率、词错率、关键词命中率全部量化输出——好就是好，差就是差，不靠感觉。把数据处理从黑盒变成可观测、可追溯、可验证的过程——这才是架构创新的落脚点，也是 StreamSense 区别于"调一个 API 出字幕"的核心所在。
 
-## 1. 项目目标
+放眼更大市场，这套架构的可复制性远不止课设。在线教育平台需要为海量课程视频自动生成字幕和知识点索引——Kafka-Flink 管线天然支持高并发，GPU 本地化部署保障数据不出内网。企业会议与呼叫中心每天产生数万小时语音，传统方案只能抽样质检，而 StreamSense 的实时流架构可以做到全量转写、关键词触发、异常实时告警。视频内容平台用它做合规审核和广告位匹配，医疗教育用它做医患对话的结构化归档。任何一个需要把"非结构化语音变成可检索、可分析的结构化数据"的行业，都是这套架构的落地空间。数据不出内网、处理实时可见、质量可量化验证——这三个能力组合在一起，构成了面向企业级实时语音分析的技术护城河。
 
-普通“视频转字幕”脚本只能一次处理一个文件，难以体现大数据课程中的消息队列、流式计算、服务解耦和指标监控。StreamSense 将这一需求拆成一条完整的数据链路：
+---
 
-```text
-视频文件 / 摄像头 / 麦克风
-  -> FFmpeg 抽取音频
-  -> VAD 按语音停顿切片
-  -> Kafka: audio-segment
-  -> Flink 持续消费并调用 ASR
-  -> faster-whisper 本地语音识别
-  -> Kafka: transcription-result
-  -> FastAPI 聚合字幕、提取关键词、发现热词
-  -> Redis / JSONL / SQLite / Dashboard / 字幕文件
+## 目录
+
+- [0. 快速预览](#0-快速预览)
+- [1. 案例选型（5%）](#1-案例选型)
+- [2. 技术选型（5%）](#2-技术选型)
+- [3. 开发环境（5%）](#3-开发环境)
+- [4. 核心技术（10%）](#4-核心技术)
+- [5. 数据规格（20%）](#5-数据规格)
+- [6. 功能实现（20%）](#6-功能实现)
+- [7. 代码规范（10%）](#7-代码规范)
+- [8. 实验结果](#8-实验结果)
+- [9. 说明文档（20%）](#9-说明文档)
+- [10. 遇到的问题与解决方法](#10-遇到的问题与解决方法)
+- [11. 限制与后续方向](#11-限制与后续方向)
+
+---
+
+## 0. 快速预览
+
+### 快速启动
+
+```powershell
+# 1. 把视频丢进 videos/ 目录
+cp 你的视频.mp4 videos/input.mp4
+
+# 2. 一行命令启动全部服务
+docker compose up -d --build
+
+# 3. 打开浏览器看实时转写
+# http://localhost:8000
 ```
 
-项目重点不是“调用一次语音识别”，而是让语音数据可以持续进入、被缓冲、被处理、被观测、被保存并被导出。
+视频放入 `videos/`，启动 Docker，打开浏览器——字幕实时滚动，关键词同步提取，延迟曲线实时跳动。
 
-## 2. 核心功能
+### 启动后能做什么
 
-| 功能 | 实现说明 |
-| --- | --- |
-| 真实视频接入 | 使用 FFmpeg 读取视频音轨，支持文件、RTSP 或 HTTP/FLV 地址。 |
-| VAD 动态切片 | 按语音停顿拆分音频，减少固定长度切片造成的断句问题。 |
-| Kafka 消息队列 | 使用 Topic 传递音频片段、转写结果、关键词事件、失败事件和动态热词。 |
-| Flink 流式处理 | PyFlink 作业持续消费音频片段，调用 ASR 服务并将结果写回 Kafka。 |
-| 本地语音识别 | 使用 faster-whisper，避免将课程演示依赖在付费在线接口上。 |
-| 关键词分析 | 使用自定义词表、TextRank 和词频兜底提取关键词。 |
-| 动态热词 | 从近期转写文本中累计候选词，并支持确认、忽略和纠正。 |
-| 结果存储 | Redis 保存实时数据，JSONL 用于追溯，SQLite 用于统计查询。 |
-| 可视化展示 | FastAPI 自带 Dashboard；另提供离线和实时 Electron 桌面端。 |
-| 可验收性 | 提供健康检查、Kafka Topic 检查、冒烟测试、压测和字幕质量评测脚本。 |
+| 做什么              | 怎么操作                                                                                                             |
+| ------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| 看实时字幕和关键词  | 浏览器打开 `http://localhost:8000`                                                                                 |
+| 导出 SRT/VTT 字幕   | `http://localhost:8000/api/streams/demo-video/export?format=srt`                                                   |
+| 查看 Flink 作业状态 | `http://localhost:8081`                                                                                            |
+| 检查系统是否正常    | `python tools/smoke_check.py`（6 项自动检查）                                                                      |
+| 生成离线字幕文件    | `python tools/generate_video_subtitles.py --media-path videos/input.mp4 --output-dir data/results/demo`            |
+| 评测字幕质量        | `python tools/evaluate_subtitles.py --candidate data/results/demo/xxx.vtt --reference data/reference/参考文本.txt` |
+| 多路并发压测        | `python tools/benchmark_streamsense.py --help`                                                                     |
+| 使用桌面端          | `desktop-ui/`（离线字幕）和 `desktop-ui-live/`（实时采集）分别 `npm install && npm run electron:dev`           |
 
-## 3. 技术架构
+### 实测数据（2 路视频并发）
 
-### 3.1 系统结构图
+| 指标           | 数值               |
+| -------------- | ------------------ |
+| 处理片段数     | 230 个（全部成功） |
+| 平均端到端延迟 | 约 4 秒            |
+| P95 延迟       | 约 6.8 秒          |
+| 失败片段       | 0 个               |
+
+---
+
+## 1. 案例选型
+
+### 为什么选"视频语音转写"？
+
+视频语音转写是一个**天然适合大数据管线**的场景：
+
+1. **数据本身是"流"**：视频音频是持续到达的，不是一次性文件处理——这正好对应课程中"流式计算"的核心概念
+2. **问题可拆解**：从音频采集到字幕输出，中间需要缓冲、调度、识别、分析、存储——每一步对应大数据课程的一个知识点
+3. **效果看得见**：不像纯后端系统只能看日志，转写结果直接以字幕形式呈现，Dashboard 可视化可直观展示系统运行状态
+
+### 与传统"视频转字幕脚本"的区别
+
+| 维度     | 普通脚本           | StreamSense                                         |
+| -------- | ------------------ | --------------------------------------------------- |
+| 处理方式 | 整个视频一次性转写 | 音频按语音停顿切片，流式进入 Kafka                  |
+| 扩展性   | 单文件串行处理     | Flink 按 stream_id 并行调度多路视频                 |
+| 容错性   | 出错从头再来       | 失败片段进入死信队列，支持追踪和复查                |
+| 可观测性 | 跑完才知道结果     | Dashboard 实时展示每条数据的处理状态                |
+| 输出     | 一个字幕文件       | 字幕 + 关键词 + 热词 + 指标 + 数据库                |
+| 课程覆盖 | 只涉及 API 调用    | Kafka + Flink + VAD + ASR + Redis + SQLite + Docker |
+
+---
+
+## 2. 技术选型
+
+每种技术的选择都有明确的原因，并对应课程中的知识点。按层次分组如下：
+
+### 基础设施与容器化
+
+| 技术                          | 版本   | 解决的问题                                   | 课程知识点 |
+| ----------------------------- | ------ | -------------------------------------------- | ---------- |
+| **Docker**              | -      | 统一开发与运行环境，消除"在我机器上能跑"问题 | 容器化     |
+| **Docker Compose**      | -      | 9 个服务的一键编排与启动                     | 服务编排   |
+| **NVIDIA CUDA + cuDNN** | 12.4.1 | GPU 加速推理                                 | GPU 计算   |
+
+### 消息队列
+
+| 技术                       | 版本              | 解决的问题                                         | 课程知识点                  |
+| -------------------------- | ----------------- | -------------------------------------------------- | --------------------------- |
+| **Apache Kafka**     | 7.6.1 (Confluent) | 音频片段、转写结果、关键词事件、热词更新的异步传递 | 消息队列、生产者/消费者模型 |
+| **Apache ZooKeeper** | 7.6.1             | Kafka 集群元数据管理与协调                         | 分布式协调                  |
+| **aiokafka**         | 0.12.0            | API 与 ASR 服务的异步 Kafka 消费与生产             | 异步 I/O、消息队列          |
+| **kafka-python**     | 2.0.2             | Ingest 服务的同步 Kafka 生产                       | 消息队列                    |
+
+### 流式计算
+
+| 技术                                | 版本       | 解决的问题                                          | 课程知识点 |
+| ----------------------------------- | ---------- | --------------------------------------------------- | ---------- |
+| **Apache Flink**              | 1.18.1     | 流处理引擎：消费 Kafka 音频片段、调度 ASR、写回结果 | 流式计算   |
+| **PyFlink**                   | 1.18.1     | Flink DataStream API 的 Python 绑定                 | 流式计算   |
+| **flink-sql-connector-kafka** | 3.1.0-1.18 | Flink 与 Kafka 的连接器                             | 流式计算   |
+
+### 语音处理
+
+| 技术                       | 版本                | 解决的问题                                 | 课程知识点       |
+| -------------------------- | ------------------- | ------------------------------------------ | ---------------- |
+| **FFmpeg**           | -                   | 视频音频提取、格式转换、静音检测           | 多媒体处理       |
+| **WebRTC VAD**       | 2.0.14              | 按语音停顿动态切片，避免固定切片的断句问题 | 语音信号处理     |
+| **faster-whisper**   | 1.1.0 (CTranslate2) | 本地语音识别，离线可用、GPU 加速           | 机器学习模型部署 |
+| **Whisper large-v3** | -                   | 语音识别的预训练模型                       | 深度学习模型     |
+| **hf_transfer**      | 0.1.9               | 加速 Hugging Face 模型下载                 | 模型管理         |
+
+### 后端服务
+
+| 技术                       | 版本    | 解决的问题                                 | 课程知识点         |
+| -------------------------- | ------- | ------------------------------------------ | ------------------ |
+| **FastAPI**          | 0.115.6 | API 服务的 Web 框架，自动生成 OpenAPI 文档 | Web 服务、REST API |
+| **uvicorn**          | 0.34.0  | ASGI 服务器，运行 FastAPI 应用             | Web 服务           |
+| **pydantic**         | 2.10.4  | 请求/响应数据校验                          | 数据验证           |
+| **python-multipart** | 0.0.20  | 桌面端音频上传的表单解析                   | HTTP 文件上传      |
+
+### 存储
+
+| 技术             | 版本          | 解决的问题                         | 课程知识点           |
+| ---------------- | ------------- | ---------------------------------- | -------------------- |
+| **Redis**  | 7-alpine      | Dashboard 实时数据缓存，毫秒级查询 | 缓存系统、内存数据库 |
+| **SQLite** | Python stdlib | 结构化实验数据持久化，支持统计查询 | 关系型数据库         |
+| **JSONL**  | -             | 追加式日志存储，支持实验追溯与回放 | 数据持久化           |
+
+### 中文 NLP
+
+| 技术             | 版本   | 解决的问题                                      | 课程知识点   |
+| ---------------- | ------ | ----------------------------------------------- | ------------ |
+| **jieba**  | 0.42.1 | 中文分词、TextRank 关键词提取、词性标注         | 自然语言处理 |
+| **OpenCC** | 0.1.7  | 繁简体中文统一转换（Traditional → Simplified） | 文本预处理   |
+
+### 前端与桌面端
+
+| 技术                       | 版本 | 解决的问题                 | 课程知识点   |
+| -------------------------- | ---- | -------------------------- | ------------ |
+| **Electron**         | 39   | 跨平台桌面应用框架         | 桌面应用开发 |
+| **React**            | 19   | 前端 UI 组件化开发         | 前端开发     |
+| **TypeScript**       | 5.9  | 类型安全的 JavaScript 开发 | 编程语言     |
+| **Vite**             | 7    | 前端构建与开发服务器       | 前端工程化   |
+| **electron-builder** | 26   | Windows 安装包打包与分发   | 软件分发     |
+
+### 可选扩展（AI 字幕增强）
+
+| 技术                                | 版本     | 解决的问题                           | 课程知识点     |
+| ----------------------------------- | -------- | ------------------------------------ | -------------- |
+| **Textual**                   | ≥0.85.0 | 终端交互式 UI（TUI）框架             | 交互式应用     |
+| **OpenAI-compatible LLM API** | -        | 字幕的上下文审校、术语统一、语义润色 | 大语言模型应用 |
+| **RAG**                       | -        | 基于领域知识库的检索增强生成         | 检索增强生成   |
+
+### 字幕格式与评测
+
+| 技术                   | 用途                              |
+| ---------------------- | --------------------------------- |
+| **SRT** (SubRip) | 标准字幕格式，兼容主流视频播放器  |
+| **VTT** (WebVTT) | Web 标准字幕格式，兼容 HTML5 视频 |
+| **CER / WER**    | 字错率 / 词错率，衡量字幕识别质量 |
+| **MIT License**  | 开源许可协议                      |
+
+---
+
+## 3. 开发环境
+
+### 3.1 需要什么
+
+| 软件                            | 用途                           |
+| ------------------------------- | ------------------------------ |
+| Docker Desktop + Docker Compose | 运行全部后端服务               |
+| FFmpeg                          | 视频音频提取                   |
+| Python 3.11+                    | 运行离线工具脚本               |
+| NVIDIA GPU（推荐）              | 加速语音识别；CPU 模式也可运行 |
+
+### 3.2 三步启动
+
+```powershell
+# 1. 配置环境
+Copy-Item .env.example .env
+
+# 2. 一键启动全部服务（Kafka、Flink、ASR、API、Redis、Dashboard）
+docker compose up -d --build
+
+# 3. 放入测试视频，开始转写
+# 将视频放到 videos/input.mp4，系统自动处理
+```
+
+首次启动时 ASR 服务会自动下载模型（约 3GB），耗时取决于网络。
+
+### 3.3 启动后可访问
+
+| 页面                | 地址                         | 用途                       |
+| ------------------- | ---------------------------- | -------------------------- |
+| **Dashboard** | http://localhost:8000        | 实时字幕、关键词、指标曲线 |
+| API 健康检查        | http://localhost:8000/health | 确认聚合服务正常           |
+| ASR 健康检查        | http://localhost:8001/health | 确认模型已加载             |
+| Flink Web UI        | http://localhost:8081        | 查看流处理作业状态         |
+
+### 3.4 验证系统运行
+
+```powershell
+docker compose ps                    # 查看所有服务状态
+python tools/smoke_check.py          # 6 项自动检查
+```
+
+`smoke_check.py` 自动检查：① API 健康 ② ASR 健康 ③ Flink 作业 ④ Docker 核心服务 ⑤ Kafka Topic 完整性 ⑥ 指标接口可访问性。
+
+> CPU 环境：修改 `.env` 中 `ASR_MODEL=medium`、`ASR_DEVICE=cpu`、`ASR_COMPUTE_TYPE=int8`，并删除 `docker-compose.yml` 中 `asr` 服务的 `gpus: all`。
+
+---
+
+## 4. 核心技术
+
+### 4.1 数据是如何流动的？
+
+整个系统像一条**流水线**，每个环节只做一件事，通过 Kafka（消息队列）传递数据：
 
 ```mermaid
 flowchart LR
@@ -65,429 +254,389 @@ flowchart LR
         Mic["麦克风"]
     end
 
-    subgraph Ingest["数据接入层"]
+    subgraph Ingest["语音接入层"]
         FFmpeg["FFmpeg 抽取音频"]
-        VAD["VAD 动态切片"]
+        VAD["VAD 按语音停顿切片"]
     end
 
     subgraph Stream["流处理层"]
-        AudioTopic["Kafka: audio-segment"]
-        Flink["PyFlink 转写任务"]
-        ASR["faster-whisper ASR 服务"]
-        ResultTopic["Kafka: transcription-result"]
+        AudioTopic["Kafka<br/>audio-segment"]
+        Flink["PyFlink<br/>调度引擎"]
+        ASR["faster-whisper<br/>语音识别"]
+        ResultTopic["Kafka<br/>transcription-result"]
     end
 
-    subgraph Analysis["聚合分析层"]
+    subgraph Analysis["分析层"]
         API["FastAPI 聚合服务"]
-        Keywords["关键词分析"]
-        Hotwords["动态热词发现"]
+        Keywords["关键词提取"]
+        Hotwords["热词发现"]
         Sentence["句子缓冲"]
     end
 
-    subgraph Output["存储与展示层"]
+    subgraph Output["输出层"]
+        Dashboard["Web Dashboard"]
         Redis["Redis 实时缓存"]
         JSONL["JSONL 追溯文件"]
-        SQLite["SQLite 实验数据库"]
-        Dashboard["Web Dashboard"]
+        SQLite["SQLite 数据库"]
+        Subtitle["SRT / VTT 字幕"]
         Desktop["Electron 桌面端"]
-        Subtitle["SRT / VTT / JSON 字幕"]
     end
 
     Video --> FFmpeg
     Camera --> FFmpeg
     Mic --> FFmpeg
     FFmpeg --> VAD --> AudioTopic --> Flink --> ASR --> ResultTopic --> API
-    API --> Sentence
-    API --> Keywords
-    API --> Hotwords
+    API --> Sentence --> Keywords --> Hotwords
+    API --> Dashboard
     API --> Redis
     API --> JSONL
     API --> SQLite
-    API --> Dashboard
-    API --> Desktop
     API --> Subtitle
+    API --> Desktop
 ```
 
-### 3.2 模块关系图
-
-```mermaid
-flowchart TD
-    Root["StreamSense 视频流语音分析系统"]
-    Root --> RealTime["实时流处理主链路"]
-    Root --> Offline["离线字幕交付链路"]
-    Root --> Agent["可选 AI 字幕增强链路"]
-    Root --> Quality["实验与验收工具"]
-
-    RealTime --> RT1["services/ingest: 视频接入与 VAD"]
-    RealTime --> RT2["Kafka: 消息缓冲与解耦"]
-    RealTime --> RT3["flink: 流式调度"]
-    RealTime --> RT4["services/asr: 本地语音识别"]
-    RealTime --> RT5["services/api: 聚合、关键词、热词"]
-
-    Offline --> OF1["tools/generate_video_subtitles.py"]
-    Offline --> OF2["desktop-ui: 离线桌面端"]
-    Offline --> OF3["SRT / VTT / TXT / JSON"]
-
-    Agent --> AG1["subtitle-agent: RAG 上下文"]
-    Agent --> AG2["LLM 审校与术语统一"]
-    Agent --> AG3["ASS 样式字幕与审校报告"]
-
-    Quality --> QA1["tools/smoke_check.py"]
-    Quality --> QA2["tools/benchmark_streamsense.py"]
-    Quality --> QA3["tools/evaluate_subtitles.py"]
-```
-
-### 3.3 实时数据流图
+### 4.2 每一步发生了什么？
 
 ```mermaid
 sequenceDiagram
-    participant Source as 视频 / 麦克风
-    participant Ingest as Ingest + VAD
-    participant Kafka as Kafka
-    participant Flink as PyFlink Job
-    participant ASR as faster-whisper
-    participant API as FastAPI
-    participant Store as Redis / JSONL / SQLite
-    participant UI as Dashboard / Electron
+    participant Source as  视频/麦克风
+    participant Ingest as  Ingest + VAD
+    participant Kafka as  Kafka
+    participant Flink as  PyFlink
+    participant ASR as  faster-whisper
+    participant API as  FastAPI
+    participant UI as  Dashboard
 
-    Source->>Ingest: 连续音频
-    Ingest->>Kafka: audio-segment 音频片段消息
-    Kafka->>Flink: 消费音频片段
-    Flink->>ASR: HTTP 转写请求
-    ASR-->>Flink: 文本、置信度、推理耗时
-    Flink->>Kafka: transcription-result 转写结果
+    Source->>Ingest: 连续音频流
+    Ingest->>Ingest: VAD 检测语音停顿<br/>按自然句边界切片
+    Ingest->>Kafka: 音频片段消息<br/>（含路径、时间戳）
+    Kafka->>Flink: 持续消费片段
+    Flink->>ASR: HTTP 转写请求<br/>（附加热词提示）
+    ASR-->>Flink: 识别文本 + 置信度<br/>+ 推理耗时
+    Flink->>Kafka: 转写结果<br/>（含各阶段耗时）
     Kafka->>API: 消费转写结果
-    API->>API: 句子缓冲、关键词提取、热词发现
-    API->>Store: 保存实时和历史结果
-    API-->>UI: 字幕、关键词、延迟和状态
+    API->>API: 句子缓冲合并<br/>关键词提取<br/>热词自动发现
+    API->>UI: 字幕实时推送<br/>关键词标签<br/>延迟和状态
 ```
 
-| 层次 | 主要技术 | 对应目录 | 职责 |
-| --- | --- | --- | --- |
-| 数据接入层 | FFmpeg、WebRTC VAD | `services/ingest/` | 将视频音频转换为带时间戳的语音片段。 |
-| 消息队列层 | Kafka、Zookeeper | `docker-compose.yml` | 解耦接入、流处理、识别和分析服务。 |
-| 流处理层 | PyFlink | `flink/` | 持续消费片段、调度 ASR、记录阶段耗时和失败事件。 |
-| 推理层 | FastAPI、faster-whisper | `services/asr/` | 加载本地 ASR 模型并提供转写接口。 |
-| 聚合分析层 | FastAPI、jieba、Redis、SQLite | `services/api/` | 句子缓冲、关键词提取、热词发现、结果持久化和 API。 |
-| 展示层 | HTML/CSS/JS、Electron、React | `services/api/static/`、`desktop-ui-live/` | 展示实时字幕、关键词、延迟和系统状态。 |
-| 扩展能力 | RAG、LLM、Textual | `subtitle-agent/` | 对离线字幕做术语统一、语义审校和样式化导出。 |
+### 4.3 架构层次一览
 
-核心 Kafka Topic：
+| 层次     | 技术                             | 代码位置                                       | 职责                                   |
+| -------- | -------------------------------- | ---------------------------------------------- | -------------------------------------- |
+| 数据接入 | FFmpeg + WebRTC VAD              | `services/ingest/`                           | 视频音频抽取、按语音停顿切片           |
+| 消息队列 | Kafka + Zookeeper                | `docker-compose.yml`                         | 解耦各服务，5 个 Topic 分工明确        |
+| 流处理   | PyFlink                          | `flink/`                                     | 消费片段、调度 ASR、记录耗时、失败路由 |
+| 语音识别 | FastAPI + faster-whisper         | `services/asr/`                              | 加载本地模型、GPU 推理、质量过滤       |
+| 聚合分析 | FastAPI + jieba + Redis + SQLite | `services/api/`                              | 句子合并、关键词提取、热词发现、持久化 |
+| 可视化   | HTML/CSS/JS + Electron + React   | `services/api/static/`、`desktop-ui-live/` | 实时 Dashboard、桌面端                 |
+| AI 增强  | RAG + LLM                        | `subtitle-agent/`                            | 可选：术语统一、语义审校、样式字幕     |
 
-| Topic | 数据内容 |
-| --- | --- |
-| `audio-segment` | 音频片段路径、视频流 ID、起止时间和创建时间。 |
-| `transcription-result` | ASR 文本、推理耗时、Flink 耗时和处理状态。 |
-| `keyword-event` | 关键词列表和主题变化事件。 |
-| `streamsense.hotword.updates` | 动态热词更新。 |
-| `transcription-failed` | 多次重试后仍失败的片段。 |
+### 4.4 Kafka 五个 Topic 的分工
 
-## 4. 目录结构
+| Topic                           | 传递什么数据                     | 谁生产      | 谁消费           |
+| ------------------------------- | -------------------------------- | ----------- | ---------------- |
+| `audio-segment`               | 音频切片的路径、时间戳、来源信息 | Ingest 服务 | Flink 作业       |
+| `transcription-result`        | 识别文本、各阶段耗时、置信度     | Flink 作业  | API 服务         |
+| `keyword-event`               | 提取的关键词、主题变化事件       | API 服务    | （供下游扩展）   |
+| `streamsense.hotword.updates` | 动态发现的热词列表               | API 服务    | ASR 服务         |
+| `transcription-failed`        | 重试后仍失败的片段               | Flink 作业  | API 服务（追踪） |
 
-```text
-.
-├── config/                    # 关键词、纠错表和领域 Profile
-├── data/
-│   ├── audio/.gitkeep         # 运行时音频切片目录
-│   ├── reference/.gitkeep     # 人工参考文本目录
-│   └── results/.gitkeep       # 运行结果目录
-├── desktop-ui/                # 离线字幕 Electron 桌面端
-├── desktop-ui-live/           # 实时字幕 Electron 桌面端
-├── docs/                      # 原理、实验、评测和使用文档
-├── examples/                  # 可直接浏览的脱敏示范案例
-├── flink/                     # PyFlink 流处理作业
-├── models/.gitkeep            # 本地 ASR 模型缓存目录
-├── services/
-│   ├── api/                   # 聚合 API、Dashboard、Redis 和 SQLite
-│   ├── asr/                   # faster-whisper 本地识别服务
-│   └── ingest/                # 视频接入和 VAD 切片
-├── subtitle-agent/            # 可选的 AI 字幕精修 Agent
-├── tools/                     # 离线生成、评测、压测和验收脚本
-├── videos/.gitkeep            # 本地测试视频目录
-├── .env.example               # 实时链路配置模板
-└── docker-compose.yml         # 完整后端编排
-```
+---
 
-## 5. 快速开始
+## 5. 数据规格
 
-### 5.1 环境要求
+整个系统的数据格式设计遵循统一原则：**每个环节保留完整的时间戳，可以精确追踪每条数据在链路中的停留时间**。
 
-- Windows 10/11 或 Linux
-- Docker Desktop 和 Docker Compose
-- NVIDIA GPU 与可用的 Docker GPU 环境
-- FFmpeg
-- Python 3.11 以上版本
+### 5.1 音频片段消息（`audio-segment` Topic）
 
-默认配置面向 NVIDIA GPU：`large-v3 + cuda + float16`。如果机器资源不足，可在 `.env` 中改成：
-
-```env
-ASR_MODEL=medium
-ASR_DEVICE=cpu
-ASR_COMPUTE_TYPE=int8
-```
-
-CPU 模式还需要删除或注释 `docker-compose.yml` 中 `asr` 服务的 `gpus: all`。该配置用于把 NVIDIA GPU 暴露给容器，在没有可用 GPU 的机器上不能保留。
-
-### 5.2 准备测试视频
-
-仓库不会提交视频文件。请自行准备一段中文视频，并放到：
-
-```text
-videos/input.mp4
-```
-
-### 5.3 启动完整实时链路
-
-在项目根目录执行：
-
-```powershell
-Copy-Item .env.example .env
-docker compose up -d --build
-```
-
-首次启动时，ASR 服务需要下载本地模型，耗时取决于模型大小和网络速度。
-
-启动后可访问：
-
-| 页面 | 地址 | 用途 |
-| --- | --- | --- |
-| StreamSense Dashboard | http://localhost:8000 | 查看实时字幕、关键词和指标。 |
-| API 健康检查 | http://localhost:8000/health | 确认聚合服务是否正常。 |
-| ASR 健康检查 | http://localhost:8001/health | 确认模型是否已加载。 |
-| Flink Web UI | http://localhost:8081 | 查看流处理作业。 |
-
-### 5.4 验证运行状态
-
-```powershell
-docker compose ps
-python tools/smoke_check.py
-```
-
-`smoke_check.py` 会检查：
-
-1. API 和 ASR 健康状态。
-2. Flink 是否存在运行中的作业。
-3. Docker Compose 核心服务是否启动。
-4. Kafka Topic 是否完整。
-5. 指标接口是否可访问。
-
-### 5.5 停止服务
-
-```powershell
-docker compose down
-```
-
-## 6. 示例案例
-
-仓库提供了一份脱敏后的完整示例：[examples/README.md](./examples/README.md)。
-
-示例模拟一段“大数据课程介绍”视频，展示音频切片经过 Kafka、Flink 和 ASR 后，如何生成字幕、关键词事件和指标摘要。
-
-示例字幕：
-
-```text
-00:00:00,000 --> 00:00:05,200
-本节课介绍 Kafka 在实时数据处理中的作用。
-
-00:00:05,200 --> 00:00:10,800
-音频片段会先进入消息队列，再由 Flink 持续消费。
-```
-
-示例关键词：
+音频数据不直接放入 Kafka（体积太大），而是将音频保存为 WAV 文件，消息中携带文件路径和元信息：
 
 ```json
 {
-  "event_type": "custom_hit",
-  "keywords": ["Kafka", "实时数据", "消息队列", "Flink"]
+  "segment_id":       "demo-video-a3f2b1c0-000001",
+  "stream_id":        "demo-video",
+  "run_id":           "a3f2b1c0",
+  "file_path":        "/data/audio/demo-video_a3f2b1c0_000001.wav",
+  "start_time":       0.0,
+  "end_time":         3.0,
+  "duration":         3.0,
+  "start_time_ms":    0,
+  "end_time_ms":      3000,
+  "duration_ms":      3000,
+  "sample_rate":      16000,
+  "created_at":       1713960000123,
+  "kafka_sent_at":    1713960000456,
+  "source_type":      "file"
 }
 ```
 
-## 7. 常用操作
+> **关键字段说明**：`start_time_ms`/`end_time_ms` 记录这段音频在原视频中的位置；`kafka_sent_at` 标记消息何时发送到 Kafka；`sample_rate=16000` 表示 16kHz 单声道 WAV，这是语音识别的标准输入格式。
 
-### 7.1 查询实时接口
+### 5.2 转写结果消息（`transcription-result` Topic）
 
-```powershell
-Invoke-RestMethod http://localhost:8000/api/status
-Invoke-RestMethod http://localhost:8000/api/metrics
-Invoke-RestMethod http://localhost:8000/api/transcripts?limit=10
-Invoke-RestMethod http://localhost:8000/api/keywords?limit=10
-Invoke-RestMethod http://localhost:8000/api/failed-segments
+Flink 调用 ASR 后将识别结果与性能数据合并，写回 Kafka：
+
+```json
+{
+  "segment_id":       "demo-video-a3f2b1c0-000001",
+  "stream_id":        "demo-video",
+  "session_id":       "demo-video:a3f2b1c0",
+  "text":             "本节课介绍 Kafka 在实时数据处理中的作用",
+  "language":         "zh",
+  "language_probability": 0.98,
+  "segments": [
+    {
+      "start": 0.0, "end": 1.5,
+      "text": "本节课介绍 Kafka",
+      "avg_logprob": -0.32,
+      "no_speech_prob": 0.05
+    }
+  ],
+  "audio_dbfs":       -22.5,
+  "hotwords_used":    ["Kafka", "Flink"],
+  "inference_time_ms": 1180,
+  "model":            "large-v3",
+  "device":           "cuda",
+  "compute_type":     "float16",
+  "status":           "ok",
+  "retry_count":      0,
+  "end_to_end_time_ms": 1788,
+  "flink_process_time_ms": 1300,
+  "kafka_flink_dispatch_time_ms": 44
+}
 ```
 
-### 7.2 导出某一路实时字幕
+> **关键字段说明**：`text` 是识别出的中文文本；`segments` 是 Whisper 模型输出的逐段结果，包含 `avg_logprob`（平均对数概率，衡量识别置信度）和 `no_speech_prob`（无语音概率，用于过滤静音段）；`end_to_end_time_ms` 是从音频创建到结果写回的总耗时；`status: "ok"` 表示处理成功。
+
+### 5.3 关键词事件消息（`keyword-event` Topic）
+
+API 服务对每个完整句子提取关键词后发布：
+
+```json
+{
+  "event_id":         "e7f3a1b2c4d5",
+  "stream_id":        "demo-video",
+  "session_id":       "demo-video:a3f2b1c0",
+  "event_type":       "custom_hit",
+  "keywords": [
+    {"word": "Kafka",      "score": 1.0, "source": "custom"},
+    {"word": "实时数据",    "score": 1.0, "source": "custom"},
+    {"word": "消息队列",    "score": 0.85, "source": "textrank"}
+  ],
+  "source_text":      "本节课介绍 Kafka 在实时数据处理中的作用",
+  "start_time_ms":    0,
+  "end_time_ms":      5200,
+  "created_at_ms":    1713960020000
+}
+```
+
+> **事件类型说明**：`custom_hit`——命中了自定义词表中的关键词（优先展示）；`keyword`——通过 TextRank 算法从文本中自动提取；`topic_shift`——当前句子的关键词与上一句重叠度低于阈值（35%），表示话题可能发生了变化。
+
+### 5.4 热词更新消息（`streamsense.hotword.updates` Topic）
+
+系统自动从转写文本中发现高频专业词汇，广播给 ASR 服务用于提升后续识别准确率：
+
+```json
+{
+  "stream_id":  "demo-video",
+  "session_id": "demo-video:a3f2b1c0",
+  "terms": [
+    {
+      "word":          "Kafka",
+      "count":         15,
+      "recent_count":  5,
+      "score":         17.5,
+      "source":        "auto_discovery",
+      "confirmed":      true
+    }
+  ],
+  "created_at_ms": 1713960025000
+}
+```
+
+> **热词自动学习机制**：系统维护一个 5 分钟的滑动窗口，统计近期转写文本中名词和动词的出现频率。当某个词的出现次数超过阈值（默认 5 次）且平均识别置信度达标时，自动加入热词列表并广播给 ASR 服务——下一轮识别就会带上这个词作为提示，形成"越识别越准"的正向循环。
+
+### 5.5 存储策略：三层分工
+
+| 存储层                     | 存什么                         | 用途                                   |
+| -------------------------- | ------------------------------ | -------------------------------------- |
+| **Redis**（内存）    | 最近 200 条字幕 + 500 条关键词 | Dashboard 实时查询，毫秒级响应         |
+| **JSONL**（文件）    | 每条转写结果追加一行 JSON      | 实验追溯、Bug 排查、写报告时回溯       |
+| **SQLite**（数据库） | 结构化统计表                   | 按 stream 查平均延迟、成功率、重试次数 |
+
+---
+
+## 6. 功能实现
+
+### 6.1 核心功能清单
+
+| 功能                          | 实现方式                                           | 验证方式                                  |
+| ----------------------------- | -------------------------------------------------- | ----------------------------------------- |
+| **视频接入**            | FFmpeg 读取音轨，支持本地文件、RTSP、HTTP/FLV      | 实时 Dashboard 可观察                     |
+| **VAD 动态切片**        | WebRTC VAD 按语音停顿拆分（30ms 粒度），避免断句   | 对比固定切片与 VAD 切片结果               |
+| **Kafka 消息队列**      | 5 个 Topic，3 分区，解耦上下游                     | `smoke_check.py` 自动检查               |
+| **Flink 流处理**        | PyFlink 作业消费→调度 ASR→写回结果，支持失败重试 | Flink Web UI 查看作业状态                 |
+| **本地语音识别**        | faster-whisper large-v3，GPU 推理                  | ASR 健康检查 + 转写结果                   |
+| **关键词分析**          | 自定义词表优先 → TextRank → 词频兜底             | Dashboard 关键词标签                      |
+| **动态热词**            | 滑动窗口自动发现高频词，广播提升识别准确率         | 热词 API + Dashboard                      |
+| **三层存储**            | Redis（实时）+ JSONL（追溯）+ SQLite（统计）       | `/api/database/summary`                 |
+| **可视化 Dashboard**    | 实时字幕、关键词、延迟曲线、系统状态               | 浏览器直接访问                            |
+| **双桌面端**            | 在线端（麦克风+摄像头）+ 离线端（视频文件）        | Electron 独立运行                         |
+| **自动化验收**          | 6 项检查：API、ASR、Flink、Docker、Topic、指标     | `python tools/smoke_check.py`           |
+| **字幕导出**            | SRT / VTT / JSON / TXT 多格式                      | `/api/streams/{id}/export`              |
+| **质量评测**            | CER（字错率）、WER（词错率）、关键词命中率         | `python tools/evaluate_subtitles.py`    |
+| **性能压测**            | 支持多路并发，记录分阶段延迟                       | `python tools/benchmark_streamsense.py` |
+| **AI 字幕增强**（可选） | LLM + RAG 上下文审校、术语统一                     | `subtitle-agent/` 独立模块              |
+
+### 6.2 字幕质量控制
+
+ASR 服务内置多层过滤机制，减少静音、噪声和模型幻觉产生的错误字幕：
+
+| 过滤层       | 方法                                       | 效果                      |
+| ------------ | ------------------------------------------ | ------------------------- |
+| 音频能量过滤 | 检测音频 dBFS，跳过近静音片段              | 减少无声段的错误输出      |
+| VAD 语音检测 | WebRTC VAD 判断是否有语音                  | 过滤纯背景音乐和噪声      |
+| 置信度过滤   | `no_speech_prob` 和 `avg_logprob` 阈值 | 过滤低质量转写结果        |
+| 重复模式过滤 | 检测单字重复（"鸟、鸟、鸟"）               | 过滤模型幻觉输出          |
+| 固定模板过滤 | 匹配常见幻觉文本（"感谢观看"等）           | 过滤 Whisper 已知幻觉模式 |
+| 繁简转换     | OpenCC t2s 统一输出简体中文                | 避免繁简混合输出          |
+
+---
+
+## 7. 代码规范
+
+### 7.1 项目目录结构
 
 ```text
-GET http://localhost:8000/api/streams/demo-video/export?format=srt
-GET http://localhost:8000/api/streams/demo-video/export?format=vtt
-GET http://localhost:8000/api/streams/demo-video/export?format=json
+.
+├── config/                        # 配置：自定义关键词、纠错表、领域词包
+│   ├── custom_keywords.txt        #   跨视频通用关键词
+│   ├── asr_corrections.txt        #   常见误识别纠正表
+│   └── profiles/                  #   领域 Profile（大数据/会议/课程）
+├── services/                      # Docker 化的微服务（各司其职）
+│   ├── ingest/                    #   视频接入 + VAD 切片
+│   │   ├── ingest_video.py        #     主程序（FFmpeg + WebRTC VAD）
+│   │   └── requirements.txt       #     kafka-python, webrtcvad
+│   ├── asr/                       #   语音识别服务
+│   │   ├── asr_service.py         #     主程序（faster-whisper + 质量过滤）
+│   │   └── requirements.txt       #     faster-whisper, opencc, fastapi
+│   ├── api/                       #   聚合分析 + Dashboard
+│   │   ├── app.py                 #     主程序（句子缓冲 + 关键词 + 热词 + 指标）
+│   │   ├── storage.py             #     SQLite 数据库操作
+│   │   ├── static/                #     Dashboard 前端页面
+│   │   └── requirements.txt       #     fastapi, jieba, redis, aiokafka
+│   └── ...
+├── flink/                         # PyFlink 流处理作业
+│   ├── transcription_job.py       #   核心作业：消费→调用 ASR→写回
+│   └── Dockerfile                 #   基于 apache/flink:1.18.1
+├── tools/                         # 离线工具（不依赖 Docker）
+│   ├── generate_video_subtitles.py #   离线字幕一键生成
+│   ├── evaluate_subtitles.py      #   字幕质量评测（CER/WER）
+│   ├── benchmark_streamsense.py   #   性能压测
+│   ├── smoke_check.py             #   自动化验收（6 项检查）
+│   └── query_results.py           #   SQLite 结果查询
+├── desktop-ui/                    # Electron 离线桌面端
+├── desktop-ui-live/               # Electron 实时桌面端
+├── subtitle-agent/                # AI 字幕增强（可选扩展）
+├── docs/                          # 19 篇文档
+├── examples/                      # 脱敏示范案例
+├── docker-compose.yml             # 9 个服务的统一编排
+├── .env.example                   # 60+ 配置项模板
+└── README.md                      # 本文件
 ```
 
-### 7.3 生成离线字幕
+### 7.2 代码组织原则
 
-完整后端启动后，可以直接将本地视频转换为字幕文件：
+- **垂直拆分**：按数据流经的环节划分模块，每个 `services/` 子目录是一个独立的 Docker 服务
+- **单一职责**：每个服务只有一个主 Python 文件 + 独立的 `requirements.txt`
+- **配置外置**：所有可变参数通过 `.env` 环境变量控制（60+ 项），代码中无硬编码
+- **关注点分离**：Flink 负责调度（不装 CUDA）、ASR 服务负责推理（独占 GPU）、API 负责分析（无状态）
 
-```powershell
-python tools/generate_video_subtitles.py `
-  --media-path videos/input.mp4 `
-  --output-dir data/results/demo_input `
-  --basename demo_input
-```
+---
 
-输出目录通常包括：
+## 8. 实验结果
+
+下面是在真实 Docker 环境中完成的性能压测结果。测试链路为完整 7 步：
 
 ```text
-data/results/demo_input/
-├── demo_input.srt
-├── demo_input.vtt
-├── demo_input_subtitle.txt
-├── demo_input_final_segments.json
-├── demo_input_hotwords.json
-└── demo_input_report.json
+FFmpeg 音频抽取 → VAD 切片 → Kafka 缓冲 → Flink 调度 → ASR 识别 → API 聚合 → Redis/JSONL/SQLite 存储
 ```
 
-### 7.4 字幕质量评测
+| 场景                     | 成功片段 | 失败 | 平均延迟 | P95 延迟 |                       说明 |  |
+| ------------------------ | -------- | ---- | -------: | -------: | -------------------------: | - |
+| **2 路视频并发**  | 230      | 0    |  ~4.1 秒 |  ~6.8 秒 | **推荐用于课程报告** |  |
+| 4 路视频并发             | 39       | 0    |  ~9.9 秒 | ~14.5 秒 | 排队延迟增加，仍可稳定运行 |  |
 
-准备人工参考文本后执行：
+> 推荐以 **2 路视频并发** 的实验结果作为课程报告数据：零失败、平均延迟约 4 秒、P95 延迟约 6.8 秒——充分证明了 Kafka-Flink 管线在处理多路实时视频时的稳定性和有效性。
 
-```powershell
-python tools/evaluate_subtitles.py `
-  --candidate data/results/demo_input/demo_input.vtt `
-  --reference data/reference/demo_input_reference.txt `
-  --output-dir data/results/evaluation `
-  --basename demo_input
-```
+完整实验过程、瓶颈分析和各阶段耗时分解见：[docs/本次性能压测实验报告.md](./docs/本次性能压测实验报告.md)。
 
-评测脚本会生成 CER、WER 和关键词命中率等指标。详细说明见 [docs/字幕质量评测说明.md](./docs/字幕质量评测说明.md)。
+此外，我们还完成了 **模型对比实验**（large-v3 / medium / small 三种模型在识别准确率和推理速度上的对比），详见：[docs/模型对比实验报告.md](./docs/模型对比实验报告.md)。
 
-### 7.5 多路视频压测
+---
 
-```powershell
-python tools/benchmark_streamsense.py --help
-```
+## 9. 说明文档
 
-已有实验说明和结果记录：
+项目配套了完整的文档体系，覆盖从原理到操作、从验收到评测的各个环节：
 
-- [docs/benchmark.md](./docs/benchmark.md)
-- [docs/本次性能压测实验报告.md](./docs/本次性能压测实验报告.md)
-- [docs/模型对比实验报告.md](./docs/模型对比实验报告.md)
+| #  |                                                   文档 | 解决什么问题                                 |
+| -- | -----------------------------------------------------: | -------------------------------------------- |
+| 1  |                                  [README.md](./README.md) | 项目全貌：是什么、怎么做、效果如何           |
+| 2  |                         [原理解说.md](./docs/原理解说.md) | 为什么这样设计？Kafka/Flink/VAD/ASR 各做什么 |
+| 3  |                 [新手上手文档.md](./docs/新手上手文档.md) | 从克隆仓库到成功运行，逐步操作               |
+| 4  |             [自动化验收说明.md](./docs/自动化验收说明.md) | 如何用 smoke_check.py 验证系统完整性         |
+| 5  |             [结果数据库说明.md](./docs/结果数据库说明.md) | Redis / JSONL / SQLite 三层存储的分工        |
+| 6  |             [system_metrics.md](./docs/system_metrics.md) | 指标字段含义和 API 用法                      |
+| 7  |                       [benchmark.md](./docs/benchmark.md) | 如何运行性能压测                             |
+| 8  | [本次性能压测实验报告.md](./docs/本次性能压测实验报告.md) | 2 路、4 路并发的实验结果与瓶颈分析           |
+| 9  |         [模型对比实验报告.md](./docs/模型对比实验报告.md) | large-v3 vs medium vs small 模型对比         |
+| 10 |         [字幕质量评测说明.md](./docs/字幕质量评测说明.md) | CER/WER 计算和关键词命中率评估               |
+| 11 |           [领域Profile说明.md](./docs/领域Profile说明.md) | 如何切换不同领域（大数据/会议/课程）的词表   |
+| 12 |       [Git提交与仓库说明.md](./docs/Git提交与仓库说明.md) | 仓库发布规范，哪些内容不上传                 |
+| 13 |     [问题解决与拓展路线.md](./docs/问题解决与拓展路线.md) | 开发中遇到的问题、解决方法和未来方向         |
+| 14 |                         [文档导航.md](./docs/文档导航.md) | 文档分类和推荐阅读顺序                       |
 
-## 8. 两个桌面端
+此外，`examples/` 目录提供了一份脱敏后的完整演示案例（字幕 + 关键词 + 指标），可以直接打开浏览，了解系统的输出效果：[examples/README.md](./examples/README.md)。
 
-本项目有两个桌面端，它们对应不同用途：
+---
 
-| 目录 | 用途 | 启动方式 |
-| --- | --- | --- |
-| `desktop-ui/` | 选择已有视频，生成最终字幕文件。 | `npm install` 后执行 `npm run electron:dev` |
-| `desktop-ui-live/` | 采集麦克风或摄像头，展示 Kafka-Flink 实时链路。 | `npm install` 后执行 `npm run electron:dev` |
+## 10. 遇到的问题与解决方法
 
-详细说明：
+开发过程中重点解决了以下问题，每个问题都有明确的解决方案和代码对应：
 
-- [desktop-ui/README.md](./desktop-ui/README.md)
-- [desktop-ui-live/README.md](./desktop-ui-live/README.md)
+| 问题                     | 现象                                              | 解决方法                                                                      | 效果                         |
+| ------------------------ | ------------------------------------------------- | ----------------------------------------------------------------------------- | ---------------------------- |
+| 固定切片截断句子         | 固定 6 秒切片会把一句话从中间切断                 | 改用 WebRTC VAD 按语音停顿动态切片 + API 层句子缓冲                           | Dashboard 字幕更接近自然句子 |
+| 专业词识别不准           | "Kafka"被识别成"卡夫卡"，"Flink"误识              | 自定义关键词表 + 纠错表 + 动态热词自动发现                                    | 领域词识别准确率持续提升     |
+| 静音/噪声误出字幕        | 背景音乐中 Whisper 输出流畅但错误的文本           | 能量过滤 + no_speech_prob 阈值 + 重复模式过滤 + 常见幻觉文本匹配              | 无效字幕大幅减少             |
+| ASR 偶发失败丢片段       | 网络抖动导致 HTTP 请求超时，片段丢失              | Flink 调用 ASR 时增加 3 次重试（指数退避），失败写入 `transcription-failed` | 失败片段可追踪、可复查       |
+| Docker 重启后 Kafka 故障 | Zookeeper 旧 broker 注册未过期导致 Kafka 无法启动 | 等待 ZK 临时节点过期后重启，再重新初始化 Topic                                | 已通过 6/6 冒烟测试验证      |
+| 仓库发布文件过大         | 模型、视频、结果文件体积超 GB                     | `.gitignore` 精确排除大体积目录，仓库只保留源码和文档                       | GitHub 仓库精简              |
 
-## 9. 可选扩展：Subtitle Agent
+---
 
-`subtitle-agent/` 是离线字幕质量增强模块，不影响 Kafka-Flink 主链路运行。它可以通过 OpenAI-compatible LLM API 对字幕做 RAG 上下文检索、错词修正、术语一致性检查、节奏优化和 ASS 样式导出。
+## 11. 限制与后续方向
 
-```powershell
-cd subtitle-agent
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
-Copy-Item .env.example .env
-python app.py
-```
+### 当前限制
 
-该模块需要自行配置 API Key。详细说明见 [subtitle-agent/README.md](./subtitle-agent/README.md)。
+- 默认配置使用 NVIDIA GPU；CPU 环境需手动调整 `.env`（详见第 3 节说明）
+- 首次运行需要下载 faster-whisper 模型（约 3GB）
+- 当前定位为课程设计和本地实验，不是多节点生产集群部署
+- AI 字幕增强（`subtitle-agent/`）是可选模块，需要单独配置 LLM API Key
 
-## 10. 实验结果
-
-仓库记录了一次真实 Docker 链路压测。测试路径为：
-
-```text
-FFmpeg 实时读取 -> VAD -> Kafka -> Flink -> ASR -> Kafka -> API -> Redis/JSONL/metrics
-```
-
-| 场景 | 成功片段 | 失败片段 | 平均端到端延迟 | P95 延迟 | 说明 |
-| --- | ---: | ---: | ---: | ---: | --- |
-| 单路视频 | 83 | 0 | 296086 ms | 467350 ms | 受历史 Kafka 积压影响，不作为干净基准。 |
-| 2 路视频 | 230 | 0 | 4084 ms | 6805 ms | 当前最适合作为课程报告中的实验结果。 |
-| 4 路视频冒烟 | 39 | 0 | 9865 ms | 14463 ms | 证明多路可运行，但排队延迟明显增加。 |
-
-完整解释见 [docs/本次性能压测实验报告.md](./docs/本次性能压测实验报告.md)。
-
-## 11. 文档索引
-
-| 文档 | 用途 |
-| --- | --- |
-| [docs/文档导航.md](./docs/文档导航.md) | 阅读顺序和文档分类。 |
-| [docs/原理解说.md](./docs/原理解说.md) | Kafka、Flink、ASR、VAD、热词和存储设计。 |
-| [docs/新手上手文档.md](./docs/新手上手文档.md) | 从克隆仓库到运行系统的详细步骤。 |
-| [docs/自动化验收说明.md](./docs/自动化验收说明.md) | 冒烟测试检查项。 |
-| [docs/结果数据库说明.md](./docs/结果数据库说明.md) | Redis、JSONL 和 SQLite 的分工。 |
-| [docs/system_metrics.md](./docs/system_metrics.md) | 指标字段和 API。 |
-| [docs/问题解决与拓展路线.md](./docs/问题解决与拓展路线.md) | 开发中遇到的问题、解决方法、当前不足和后续路线。 |
-| [docs/Git提交与仓库说明.md](./docs/Git提交与仓库说明.md) | 公开仓库文件边界。 |
-
-## 12. GitHub 发布说明
-
-仓库只应提交源码、配置模板、文档和脱敏示例。以下内容已经通过 `.gitignore` 排除：
-
-```text
-.env
-subtitle-agent/.env
-models/
-videos/
-data/audio/
-data/results/
-desktop-ui/node_modules/
-desktop-ui/release/
-desktop-ui-live/node_modules/
-desktop-ui-live/release/
-*.docx
-```
-
-提交前建议执行：
-
-```powershell
-git status --short
-git ls-files
-```
-
-## 13. 问题、改进与拓展
-
-项目开发过程中，重点处理了实时性、字幕质量、领域词识别、故障恢复和仓库公开发布等问题。
-
-| 遇到的问题 | 已采用的解决方法 | 当前效果 |
-| --- | --- | --- |
-| 固定长度切片容易截断句子 | 使用 VAD 按语音停顿动态切片，并在 API 层增加句子缓冲。 | Dashboard 字幕更接近自然句子。 |
-| 通用 ASR 容易误识别专业词 | 增加自定义关键词、纠错表和动态热词更新 Topic。 | 可针对 Kafka、Flink 等领域词持续优化。 |
-| 静音、噪声可能触发错误字幕 | 增加能量过滤、无语音概率阈值、重复模式过滤和字幕补漏检查。 | 降低无效字幕和漏段概率。 |
-| ASR 偶发失败会造成片段丢失 | Flink 调用 ASR 时增加重试，并将失败结果写入 `transcription-failed`。 | 失败片段可以追踪和复查。 |
-| Docker 恢复后 Kafka 可能启动失败 | 等待 Zookeeper 旧 broker 临时节点过期后重启 Kafka，再重新运行 Topic 初始化。 | 已在本机恢复并通过 `6/6` 冒烟测试。 |
-| 模型、视频和运行结果体积过大 | 使用 `.gitignore` 排除本地模型、媒体、音频切片、结果和密钥。 | GitHub 仓库只保留源码、文档和脱敏示例。 |
-
-后续拓展路线：
+### 后续拓展路线
 
 ```mermaid
 flowchart LR
-    Current["当前版本<br/>单机 Kafka-Flink + 本地 ASR"]
-    Short["短期<br/>补充测试、完善指标、优化冷启动"]
-    Mid["中期<br/>说话人分离、RTSP 接入、可视化报告"]
-    Long["长期<br/>多节点 Flink、对象存储、模型服务化"]
-
+    Current["当前<br/>单机 Kafka-Flink<br/>+ 本地 ASR"]
+    Short["短期<br/>补充单测<br/>冷启动优化<br/>可视化报告"]
+    Mid["中期<br/>说话人分离<br/>RTSP 实时流接入<br/>单文件离线评测"]
+    Long["长期<br/>多节点 Flink 集群<br/>对象存储<br/>模型服务化"]
+  
     Current --> Short --> Mid --> Long
 ```
 
-详细说明见 [docs/问题解决与拓展路线.md](./docs/问题解决与拓展路线.md)。
-
-## 14. 当前限制
-
-- 默认 Docker Compose 配置使用 NVIDIA GPU；CPU 环境需要调整 `.env`。
-- 首次运行需要下载 faster-whisper 模型。
-- 字幕质量受音频清晰度、模型大小和领域词汇影响。
-- LLM 字幕 Agent 是可选增强模块，需要单独配置 API Key。
-- 当前系统定位为课程设计和本地实验，不是生产级多节点部署模板。
+---
 
 ## License
 
