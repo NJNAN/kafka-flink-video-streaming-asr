@@ -1,0 +1,27 @@
+{
+  "name": "streamsense-meeting-assistant-tablet",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 0.0.0.0 --port 5180",
+    "dev:https": "vite --host 0.0.0.0 --port 5180 --mode https",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview --host 0.0.0.0 --port 4180"
+  },
+  "dependencies": {
+    "@capacitor/android": "^8.4.0",
+    "@capacitor/core": "^8.4.0",
+    "@vitejs/plugin-basic-ssl": "^2.1.0",
+    "@vitejs/plugin-react": "^5.1.1",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "typescript": "^5.9.3",
+    "vite": "^7.2.4"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^8.4.0",
+    "@types/react": "^19.2.7",
+    "@types/react-dom": "^19.2.3"
+  }
+}

@@ -1,0 +1,19 @@
+{
+  "name": "MeetFlow",
+  "short_name": "MeetFlow",
+  "description": "AI meeting workspace for live notes, decisions, actions, and follow-up assets.",
+  "start_url": "./",
+  "display": "standalone",
+  "orientation": "landscape",
+  "background_color": "#f4f1ea",
+  "theme_color": "#264a37",
+  "categories": ["productivity", "business"],
+  "icons": [
+    {
+      "src": "./icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">MeetFlow</string>
+    <string name="title_activity_main">MeetFlow</string>
+    <string name="package_name">com.streamsense.meetflow</string>
+    <string name="custom_url_scheme">com.streamsense.meetflow</string>
+</resources>

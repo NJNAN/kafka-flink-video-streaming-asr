@@ -11,6 +11,8 @@ services:
       AUDIO_TOPIC: ${AUDIO_TOPIC:-audio-segment}
       OUTPUT_DIR: /data/audio
       STREAM_ID: desktop-live
+      LIVE_INGEST_MIN_DBFS: ${LIVE_INGEST_MIN_DBFS:--55}
+      LIVE_INGEST_MIN_WAV_BYTES: ${LIVE_INGEST_MIN_WAV_BYTES:-24000}
     volumes:
       - ./data:/data
     ports:

@@ -27,6 +27,7 @@ env/
 .idea/
 *.code-workspace
 .claude/
+.awesome-rebuttal/
 .playwright-mcp/
 
 # ------------------------------
@@ -115,6 +116,24 @@ pnpm-debug.log*
 playwright-report/
 test-results/
 coverage/
+/output/
+
+# ------------------------------
+# Meeting tablet local outputs
+# ------------------------------
+/meeting-assistant-tablet/node_modules/
+/meeting-assistant-tablet/dist/
+/meeting-assistant-tablet/android/.gradle/
+/meeting-assistant-tablet/android/build/
+/meeting-assistant-tablet/android/app/build/
+/meeting-assistant-tablet/android/capacitor-cordova-android-plugins/
+/meeting-assistant-tablet/android/local.properties
+/meeting-assistant-tablet/android/app/src/main/assets/public/
+/meeting-assistant-tablet/android/app/src/main/assets/capacitor.config.json
+/meeting-assistant-tablet/android/app/src/main/assets/capacitor.plugins.json
+/meeting-assistant-tablet/android/app/src/main/res/xml/config.xml
+/meeting-assistant-tablet/MeetFlow-debug.apk
+*.apk
 
 # ------------------------------
 # Personal course-delivery files

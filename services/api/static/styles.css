@@ -94,11 +94,22 @@ body {
 .panel-title {
   padding: 16px 18px;
   border-bottom: 1px solid #e6ebf2;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
 }
 
 .panel-title h2 {
   margin: 0;
   font-size: 18px;
+}
+
+.chart-meta {
+  color: #647187;
+  font-size: 13px;
+  line-height: 1.4;
+  text-align: right;
 }
 
 .history {
@@ -177,5 +188,14 @@ body {
   .topbar {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .panel-title {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .chart-meta {
+    text-align: left;
   }
 }

@@ -141,6 +141,35 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 recent_transcripts: deque[dict[str, Any]] = deque(maxlen=500)
 recent_keywords: deque[dict[str, Any]] = deque(maxlen=500)
 metrics_history: deque[dict[str, Any]] = deque(maxlen=METRICS_HISTORY_MAX_POINTS)
+METRICS_HISTORY_FIELDS = {
+    "status",
+    "stream_id",
+    "active_stream_count",
+    "total_segments",
+    "success_segments",
+    "failed_segments",
+    "average_end_to_end_latency_ms",
+    "p50_latency_ms",
+    "p95_latency_ms",
+    "p99_latency_ms",
+    "asr_average_time_ms",
+    "latest_segment_id",
+    "latest_segment_latency_ms",
+    "latest_asr_time_ms",
+    "latest_result_written_at_ms",
+    "kafka_flink_average_dispatch_ms",
+    "api_average_aggregation_ms",
+    "redis_average_write_ms",
+    "retry_count_average",
+    "retry_count_max",
+    "pending_segments",
+    "throughput_segments_per_second",
+    "sampled_at_ms",
+    "segments_delta",
+    "failed_delta",
+    "sample_interval_ms",
+    "recent_throughput_segments_per_second",
+}
 status = {
     "transcript_count": 0,
     "keyword_event_count": 0,
@@ -605,6 +634,30 @@ def sorted_segments(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
     )
 
 
+def record_time_ms(item: dict[str, Any]) -> int:
+    return numeric_ms(
+        item,
+        "result_written_at",
+        "api_received_at",
+        "created_at_ms",
+        "created_at",
+        "audio_created_at_ms",
+        "kafka_sent_at",
+    )
+
+
+def sorted_recent(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return sorted(
+        items,
+        key=lambda item: (
+            record_time_ms(item),
+            str(item.get("stream_id", "")),
+            str(item.get("segment_id", "")),
+        ),
+        reverse=True,
+    )
+
+
 def load_transcript_history(limit: int = 5000, stream_id: str | None = None) -> list[dict[str, Any]]:
     file_items = tail_jsonl(RESULT_DIR / "transcripts.jsonl", limit)
     memory_items = list(recent_transcripts)
@@ -652,6 +705,7 @@ def stream_hotwords(stream_id: str) -> list[dict[str, Any]]:
 def build_metrics_payload(stream_id: str | None = None) -> dict[str, Any]:
     items = load_transcript_history(stream_id=stream_id)
     failed_items = load_failed_history(stream_id=stream_id)
+    latest_item = max(items, key=record_time_ms) if items else {}
     end_to_end = [float(numeric_ms(item, "end_to_end_time_ms")) for item in items if numeric_ms(item, "end_to_end_time_ms")]
     asr_times = [
         float(numeric_ms(item, "asr_inference_time_ms", "inference_time_ms", "asr_total_time_ms"))
@@ -699,6 +753,10 @@ def build_metrics_payload(stream_id: str | None = None) -> dict[str, Any]:
         "p95_latency_ms": round(percentile(end_to_end, 0.95), 2),
         "p99_latency_ms": round(percentile(end_to_end, 0.99), 2),
         "asr_average_time_ms": round(sum(asr_times) / len(asr_times), 2) if asr_times else 0,
+        "latest_segment_id": latest_item.get("segment_id", ""),
+        "latest_segment_latency_ms": numeric_ms(latest_item, "end_to_end_time_ms"),
+        "latest_asr_time_ms": numeric_ms(latest_item, "asr_inference_time_ms", "inference_time_ms", "asr_total_time_ms"),
+        "latest_result_written_at_ms": record_time_ms(latest_item),
         "kafka_flink_average_dispatch_ms": round(sum(kafka_flink) / len(kafka_flink), 2) if kafka_flink else 0,
         "api_average_aggregation_ms": round(sum(api_times) / len(api_times), 2) if api_times else 0,
         "redis_average_write_ms": round(sum(redis_times) / len(redis_times), 2) if redis_times else 0,
@@ -713,18 +771,69 @@ def build_metrics_payload(stream_id: str | None = None) -> dict[str, Any]:
 
 def load_metrics_history_from_file() -> None:
     for item in tail_jsonl(METRICS_HISTORY_FILE, METRICS_HISTORY_MAX_POINTS):
-        metrics_history.append(item)
+        metrics_history.append(compact_metrics_sample(item))
+
+
+def compact_metrics_sample(payload: dict[str, Any]) -> dict[str, Any]:
+    return {key: payload.get(key) for key in METRICS_HISTORY_FIELDS if key in payload}
+
+
+def add_metrics_sample_delta(payload: dict[str, Any], sampled_at_ms: int) -> dict[str, Any]:
+    stream_key = str(payload.get("stream_id", ""))
+    previous = next(
+        (
+            item
+            for item in reversed(metrics_history)
+            if str(item.get("stream_id", "")) == stream_key
+        ),
+        None,
+    )
+    payload["sampled_at_ms"] = sampled_at_ms
+    if not previous:
+        payload["segments_delta"] = 0
+        payload["failed_delta"] = 0
+        payload["sample_interval_ms"] = 0
+        payload["recent_throughput_segments_per_second"] = 0.0
+        return compact_metrics_sample(payload)
+
+    interval_ms = max(sampled_at_ms - numeric_ms(previous, "sampled_at_ms"), 0)
+    segments_delta = max(int(payload.get("success_segments", 0) or 0) - int(previous.get("success_segments", 0) or 0), 0)
+    failed_delta = max(int(payload.get("failed_segments", 0) or 0) - int(previous.get("failed_segments", 0) or 0), 0)
+    payload["segments_delta"] = segments_delta
+    payload["failed_delta"] = failed_delta
+    payload["sample_interval_ms"] = interval_ms
+    payload["recent_throughput_segments_per_second"] = (
+        round(segments_delta / (interval_ms / 1000), 3) if interval_ms > 0 else 0.0
+    )
+    return compact_metrics_sample(payload)
+
+
+def metrics_history_for_stream(stream_id: str | None) -> list[dict[str, Any]]:
+    data = list(metrics_history)
+    if stream_id is None:
+        return [compact_metrics_sample(item) for item in data if not item.get("stream_id")]
+    return [compact_metrics_sample(item) for item in data if str(item.get("stream_id", "")) == stream_id]
+
+
+def current_metrics_sample(stream_id: str | None) -> dict[str, Any]:
+    payload = build_metrics_payload(stream_id=stream_id)
+    return add_metrics_sample_delta(payload, now_ms())
 
 
 async def collect_metrics_history() -> None:
     """定期采样 API 指标，用于 Dashboard 曲线、实验复盘和 SQLite 统计。"""
     while True:
         try:
-            payload = build_metrics_payload()
-            payload["sampled_at_ms"] = now_ms()
-            metrics_history.append(payload)
-            await asyncio.to_thread(append_jsonl, METRICS_HISTORY_FILE, payload)
-            await asyncio.to_thread(insert_metrics_sample, DB_PATH, payload)
+            sampled_at_ms = now_ms()
+            payloads = [add_metrics_sample_delta(build_metrics_payload(), sampled_at_ms)]
+            payloads.extend(
+                add_metrics_sample_delta(build_metrics_payload(stream_id=stream_id), sampled_at_ms)
+                for stream_id in stream_ids_from_history()
+            )
+            for payload in payloads:
+                metrics_history.append(payload)
+                await asyncio.to_thread(append_jsonl, METRICS_HISTORY_FILE, payload)
+                await asyncio.to_thread(insert_metrics_sample, DB_PATH, payload)
         except Exception as exc:
             print(f"[api] 指标历史采样失败: {exc}", flush=True)
         await asyncio.sleep(METRICS_HISTORY_INTERVAL_SECONDS)
@@ -1315,7 +1424,7 @@ async def transcripts(stream_id: str | None = None, limit: int = Query(default=5
     data = list(recent_transcripts)
     if stream_id:
         data = [item for item in data if item.get("stream_id") == stream_id]
-    return sorted_segments(data)[:limit]
+    return sorted_recent(data)[:limit]
 
 
 @app.get("/api/keywords")
@@ -1336,9 +1445,10 @@ async def metrics_history_endpoint(
     stream_id: str | None = None,
     limit: int = Query(default=120, ge=1, le=METRICS_HISTORY_MAX_POINTS),
 ) -> list[dict[str, Any]]:
-    data = list(metrics_history)
-    if stream_id:
-        data = [item for item in data if item.get("stream_id") == stream_id]
+    data = metrics_history_for_stream(stream_id)
+    live_sample = current_metrics_sample(stream_id)
+    if not data or data[-1].get("latest_segment_id") != live_sample.get("latest_segment_id"):
+        data = [*data, live_sample]
     return data[-limit:]
 
 

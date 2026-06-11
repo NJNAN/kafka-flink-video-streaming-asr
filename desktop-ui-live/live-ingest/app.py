@@ -34,8 +34,8 @@ OUTPUT_DIR = Path(os.getenv("OUTPUT_DIR", "/data/audio"))
 BOOTSTRAP_SERVERS = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "kafka:9092")
 AUDIO_TOPIC = os.getenv("AUDIO_TOPIC", "audio-segment")
 DEFAULT_STREAM_ID = os.getenv("STREAM_ID", "desktop-live")
-MIN_DBFS = float(os.getenv("LIVE_INGEST_MIN_DBFS", "-45"))
-MIN_WAV_BYTES = int(os.getenv("LIVE_INGEST_MIN_WAV_BYTES", "32000"))
+MIN_DBFS = float(os.getenv("LIVE_INGEST_MIN_DBFS", "-55"))
+MIN_WAV_BYTES = int(os.getenv("LIVE_INGEST_MIN_WAV_BYTES", "24000"))
 DROP_TEXT_PATTERNS = [
     "Amara.org",
     "中文字幕志愿者",
