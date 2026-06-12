@@ -306,7 +306,34 @@ docker compose up -d --build
 | Android SDK + JDK 21（可选）    | 构建 MeetFlow Android debug APK |
 | NVIDIA GPU（推荐）              | 加速语音识别；CPU 模式也可运行 |
 
-### 3.2 三步启动
+### 3.2 依赖文件怎么分
+
+这个仓库不是单个 Python 脚本，而是多服务工程。依赖按服务拆分，根目录 `requirements.txt` 只作为本地工具和测试的入口说明，避免一次性把 PyFlink、faster-whisper、CUDA 推理依赖全部装到同一个环境里。
+
+| 依赖文件 | 对应模块 | 主要依赖 | 什么时候需要 |
+| --- | --- | --- | --- |
+| `requirements.txt` | 根目录工具与轻量测试 | 当前只用 Python 标准库 | 运行 `tools/smoke_check.py`、`tools/evaluate_subtitles.py`、`python -m unittest` |
+| `services/api/requirements.txt` | API + Dashboard 聚合服务 | FastAPI、aiokafka、Redis、jieba、pydantic | 本地运行 API 或构建 `streamsense-api` 容器 |
+| `services/asr/requirements.txt` | ASR 识别服务 | faster-whisper、OpenCC、FastAPI、aiokafka | 本地运行 ASR 或构建 `streamsense-asr` 容器 |
+| `services/ingest/requirements.txt` | 视频接入服务 | kafka-python、webrtcvad-wheels | 本地运行视频接入或构建 ingest 容器 |
+| `flink/requirements.txt` | PyFlink 作业 | apache-flink、requests | 本地调试 Flink 作业或构建 Flink 镜像 |
+| `desktop-ui-live/live-ingest/requirements.txt` | 实时麦克风接入服务 | FastAPI、kafka-python、python-multipart | 运行实时桌面端或手机/平板 App 的 `/live/audio` 接入 |
+| `subtitle-agent/requirements.txt` | 可选 AI 字幕增强 | textual | 使用字幕增强 TUI/Agent |
+| `*/package.json` | 桌面端、实时端、移动端 | Electron、React、Vite、Capacitor | 运行或打包前端客户端 |
+
+常用命令：
+
+```powershell
+# 本地工具/测试：当前无额外第三方依赖，但保留统一入口
+python -m pip install -r requirements.txt
+
+# 某个服务需要脱离 Docker 本地运行时，再安装对应依赖
+python -m pip install -r services/api/requirements.txt
+python -m pip install -r services/asr/requirements.txt
+python -m pip install -r desktop-ui-live/live-ingest/requirements.txt
+```
+
+### 3.3 三步启动
 
 ```powershell
 # 1. 配置环境
@@ -321,7 +348,7 @@ docker compose up -d --build
 
 首次启动时 ASR 服务会自动下载模型（约 3GB），耗时取决于网络。
 
-### 3.3 启动后可访问
+### 3.4 启动后可访问
 
 | 页面                | 地址                         | 用途                       |
 | ------------------- | ---------------------------- | -------------------------- |
@@ -330,7 +357,7 @@ docker compose up -d --build
 | ASR 健康检查        | http://localhost:8001/health | 确认模型已加载             |
 | Flink Web UI        | http://localhost:8081        | 查看流处理作业状态         |
 
-### 3.4 验证系统运行
+### 3.5 验证系统运行
 
 ```powershell
 docker compose ps                    # 查看所有服务状态

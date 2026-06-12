@@ -1,0 +1,15 @@
+# StreamSense root Python requirements
+#
+# The repository is split into Docker services. Runtime dependencies are kept
+# next to the service that uses them, so container builds stay small and clear:
+#
+# - services/api/requirements.txt
+# - services/asr/requirements.txt
+# - services/ingest/requirements.txt
+# - flink/requirements.txt
+# - desktop-ui-live/live-ingest/requirements.txt
+# - subtitle-agent/requirements.txt
+#
+# Root-level tools under tools/ and lightweight tests under tests/ currently use
+# only the Python standard library. Therefore `pip install -r requirements.txt`
+# is intentionally a no-op for local smoke checks.
