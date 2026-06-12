@@ -29,7 +29,7 @@ const modes = [
     name: "高质量",
     model: "large-v3",
     speed: "约 0.47x",
-    quality: "答辩推荐",
+    quality: "质量优先",
     gpu: "高占用"
   }
 ];

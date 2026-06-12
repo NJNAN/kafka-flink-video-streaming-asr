@@ -290,7 +290,7 @@ export function App() {
           <span>领域 Profile</span>
           <div>
             <select value={profile} onChange={(event) => setProfile(event.target.value)}>
-              <option value="bigdata">大数据课设</option>
+              <option value="bigdata">大数据工程</option>
               <option value="course">课程视频</option>
               <option value="meeting">会议录音</option>
               <option value="dino">恐龙专题</option>

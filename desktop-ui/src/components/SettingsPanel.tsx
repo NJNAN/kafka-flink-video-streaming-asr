@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 const modelOptions = ["small", "base", "medium", "large-v3"];
 const profileOptions = [
   { value: "", label: "通用" },
-  { value: "bigdata", label: "大数据课设" },
+  { value: "bigdata", label: "大数据工程" },
   { value: "course", label: "课程视频" },
   { value: "meeting", label: "会议录音" },
   { value: "dino", label: "恐龙专题" }
