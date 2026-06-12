@@ -1,35 +1,66 @@
-# MeetFlow 一键会议纪要
+# MeetFlow 手机/平板会议纪要 App
 
-面向华为平板的极简会议纪要 App。用户打开后只做一件事：按下按钮记录会议，录音时实时显示正在谈话的文字，结束后自动生成摘要和待办。
+MeetFlow 是 StreamSense 的移动端会议纪要入口。它把手机或平板麦克风采集到的语音切成短音频片段，上传到 StreamSense Live 后端，后续仍由 Kafka、Flink、ASR、FastAPI 完成实时识别和结果聚合；移动端只负责“开始记录、实时显示、结束生成纪要”这条最短用户路径。
 
-## 运行
+当前支持两种运行形态：
+
+- **HTTPS PWA**：同一局域网内用手机/平板浏览器访问 Vite HTTPS 地址，适合快速联调。
+- **Android APK**：通过 Capacitor 封装为原生 Android WebView 应用，包名为 `com.streamsense.meetflow`。
+
+## 技术栈
+
+| 层次 | 技术 | 用途 |
+| --- | --- | --- |
+| UI | React 19 + TypeScript 5.9 | 会议记录状态、实时文字、纪要卡片和待办列表 |
+| 构建 | Vite 7 | 本地开发服务、HTTPS 调试、生产构建 |
+| 录音 | `getUserMedia` + `MediaRecorder` | 获取麦克风权限并按 1.8 秒切片上传 |
+| 实时回显 | `fetch` + 轮询 API | 每 0.7 秒读取 `meetflow-tablet` 流的转写片段 |
+| 兜底识别 | Web Speech API | 后端未连通或浏览器支持时提供低延迟文字兜底 |
+| Android 封装 | Capacitor Core / Android 8.4 | 将 Web App 打包为 Android APK |
+| Android 工程 | minSdk 24, targetSdk 36 | 声明 `RECORD_AUDIO`、`INTERNET`、明文局域网访问配置 |
+
+## 数据流
+
+```text
+手机/平板麦克风
+  -> MediaRecorder 每 1.8 秒生成 webm/opus 音频片段
+  -> POST /live/audio，携带 stream_id、run_id、chunk_index、hotwords
+  -> StreamSense Live Ingest
+  -> Kafka audio-segment
+  -> Flink 调度 ASR
+  -> Kafka transcription-result
+  -> FastAPI 聚合到 /api/streams/meetflow-tablet/segments
+  -> App 轮询回显，并在结束后生成摘要、待办和原文摘录
+```
+
+默认流 ID 是 `meetflow-tablet`。每次点击“开始记录”都会生成新的 `run_id`，App 只合并本次会议的识别片段，避免和历史演示数据混在一起。
+
+## 运行 HTTPS PWA
 
 ```powershell
 cd meeting-assistant-tablet
 npm install
-npm run dev
-```
-
-华为平板需要麦克风权限时，建议用 HTTPS 开发服务：
-
-```powershell
 npm run dev:https
 ```
 
-电脑和华为平板连接同一个 Wi-Fi 后，在平板浏览器访问 Vite 输出的局域网地址，例如：
+电脑和手机/平板连接同一个 Wi-Fi 后，在移动设备浏览器访问 Vite 输出的局域网 HTTPS 地址，例如：
 
 ```text
 https://192.168.123.242:5180
 ```
 
-浏览器支持时，可以通过“添加到桌面”以 PWA 方式运行，视觉和交互会更接近平板 App。
+第一次访问会看到自签名证书提示，接受后再点击“开始记录”。多数移动浏览器不允许普通 `http://电脑IP:5180` 页面打开麦克风，所以联调移动端时优先使用 `npm run dev:https`。
 
-## APK
+浏览器支持时，可以通过“添加到桌面”以 PWA 方式运行，视觉和交互会更接近独立 App。
 
-当前已支持 Capacitor Android 打包，默认后端主机写入为：
+## 构建 Android APK
+
+Capacitor 配置：
 
 ```text
-192.168.123.242
+appId: com.streamsense.meetflow
+appName: MeetFlow
+webDir: dist
 ```
 
 构建 debug APK：
@@ -42,29 +73,39 @@ npx cap sync android
 .\android\gradlew.bat -p android assembleDebug
 ```
 
-输出文件：
+输出位置：
 
 ```text
-MeetFlow-debug.apk
 android/app/build/outputs/apk/debug/app-debug.apk
 ```
 
-如果电脑 IP 变化，重新构建前设置：
+如需在仓库根目录保留一份本地安装包，可手动复制为 `MeetFlow-debug.apk`。APK、Gradle build 目录、Capacitor 同步产物都已在 `.gitignore` 中排除，不会进入公开仓库。
+
+## 后端地址配置
+
+Capacitor 原生壳运行时无法走 Vite 代理，因此默认会访问：
+
+```text
+API:         http://192.168.123.242:8000
+Live Ingest: http://192.168.123.242:8010
+```
+
+电脑 IP 变化时，构建前设置：
 
 ```powershell
 $env:VITE_STREAMSENSE_BACKEND_HOST="新的电脑IP"
+npm run build
+npx cap sync android
 ```
 
-## 后端数据
+也可以分别指定两个服务地址：
 
-默认使用浏览器麦克风录音，并把音频片段发送到 StreamSense Live 实时后端识别；如果浏览器自带语音识别可用，也会作为低延迟兜底。录音中会显示“正在听”文字卡片。结束后，标题、摘要和待办会根据本次真实识别到的文本生成；如果没有识别到清晰内容，会明确提示未识别，而不会伪造示例纪要。
-
-当前前端使用快速模式：
-
-- 每 1.8 秒上传一段音频
-- 每 0.7 秒轮询一次识别结果
-- 浏览器本地语音识别会自动重启，尽量保持实时文字不断
-- 平板麦克风声音偏小时，live-ingest 的静音过滤阈值已放宽到 `LIVE_INGEST_MIN_DBFS=-55`
+```powershell
+$env:VITE_STREAMSENSE_API_BASE="http://电脑IP:8000"
+$env:VITE_STREAMSENSE_LIVE_INGEST_URL="http://电脑IP:8010"
+$env:VITE_STREAMSENSE_STREAM_ID="meetflow-tablet"
+npm run dev:https
+```
 
 开发服务默认把同源请求代理到本机实时后端：
 
@@ -73,20 +114,21 @@ $env:VITE_STREAMSENSE_BACKEND_HOST="新的电脑IP"
 /api/...    -> http://127.0.0.1:8000/api/...
 ```
 
-如果服务地址不同，可以手动指定：
+## 产品能力
 
-```powershell
-$env:VITE_STREAMSENSE_API_BASE="http://电脑IP:8000"
-$env:VITE_STREAMSENSE_LIVE_INGEST_URL="http://电脑IP:8010"
-npm run dev
-```
+- 一键开始记录，申请麦克风权限并实时上传音频片段。
+- 录音时显示“正在听”文字卡片，后端结果返回后自动刷新。
+- 一键结束，根据真实转写文本生成标题、摘要、待办和原文摘录。
+- 没有识别到清晰内容时明确提示，不伪造示例纪要。
+- 支持复制 Markdown 格式纪要，方便粘贴到聊天、文档或项目记录中。
 
-注意：很多平板浏览器不允许在 `http://电脑IP:5180` 这种非 HTTPS 页面里打开麦克风。遇到麦克风无法开启时，用 `npm run dev:https`，在平板浏览器接受一次自签名证书提示后再点“开始记录”。
+## 验证清单
 
-## 产品定位
-
-这个应用不展示工程后台、科研流程或控制台指标，只保留一个普通用户能理解的功能：
-
-- 一键开始记录，并实时显示正在谈话的文字
-- 一键结束并根据真实转写文本生成纪要
-- 输出真实摘要、待办和原文摘录
+| 检查项 | 预期结果 |
+| --- | --- |
+| `npm run dev:https` | 手机/平板能打开 HTTPS 页面并申请麦克风权限 |
+| StreamSense 后端已启动 | 点击开始后几秒内出现实时文字或服务连接提示 |
+| `/api/streams/meetflow-tablet/segments` | 可以看到本次 `run_id` 对应的识别片段 |
+| `npm run build` | TypeScript 类型检查和 Vite 构建通过 |
+| `npx cap sync android` | Web 构建产物同步到 Android 工程 |
+| `assembleDebug` | 生成可安装的 Android debug APK |
