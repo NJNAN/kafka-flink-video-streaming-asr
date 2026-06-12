@@ -101,7 +101,7 @@ data/results/streamsense.db
 /api/database/summary?stream_id=demo-video
 ```
 
-这个接口适合答辩时解释“实验结果不只是日志，也能结构化查询”。
+这个接口用于说明：实验结果不只是日志，也能按结构化指标查询和复盘。
 
 ### `/api/streams`
 

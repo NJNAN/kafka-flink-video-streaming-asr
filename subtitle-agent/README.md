@@ -113,7 +113,7 @@ data/results/agent_tasks/<agent_task_id>/
 - `rhythm_report.json` 记录字幕阅读节奏优化。
 - `subtitle_integrity_report.json` 会记录导出前是否补回过空白字幕段。
 - `agent_suggestions.json` 是结构化字幕建议。
-- `agent_report.md` 是答辩和展示用报告。
+- `agent_report.md` 是复盘和展示用报告。
 - `revised.ass` 是带样式字幕，适合播放器、剪辑软件或后续压制到视频里。
 - `revised.clean.ass` 是干净通用版样式字幕。
 - `revised.creator.ass` 是更适合短视频/创作者风格的样式字幕。

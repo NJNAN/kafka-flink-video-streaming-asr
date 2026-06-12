@@ -40,7 +40,7 @@ python tools/generate_video_subtitles.py `
 
 离线字幕桌面端现在有“领域 Profile”选择：
 
-- 大数据课设
+- 大数据技术内容
 - 课程视频
 - 会议录音
 - 恐龙专题
@@ -69,10 +69,10 @@ config/profiles/mytopic_corrections.txt
 python tools/generate_video_subtitles.py --media-path videos/input.mp4 --profile mytopic --use-static-hints
 ```
 
-## 5. 答辩说法
+## 5. 如何说明 Profile 设计
 
 ```text
-同一个 ASR 模型面对不同课程内容会有不同领域词。
-我把热词和纠错表抽象成领域 Profile，
-这样系统可以切换到大数据课设、课程视频、会议录音等场景。
+同一个 ASR 模型面对不同领域内容会遇到不同专有词。
+StreamSense 将热词和纠错表抽象成领域 Profile，
+因此可以在大数据技术内容、讲解类视频、会议录音等场景之间切换。
 ```

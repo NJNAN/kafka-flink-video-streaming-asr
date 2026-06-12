@@ -5,7 +5,7 @@
 它和 `desktop-ui/` 的离线字幕生成器分开，原因是两者目标完全不同：
 
 - `desktop-ui/`：处理一个已经存在的视频文件，偏“最终字幕文件质量”。
-- `desktop-ui-live/`：采集摄像头/麦克风，偏“实时流处理演示”，必须走 Kafka + Flink。
+- `desktop-ui-live/`：采集摄像头/麦克风，偏“实时流处理验证”，必须走 Kafka + Flink。
 
 ## 实时链路
 
@@ -53,6 +53,6 @@ desktop-ui-live/release/win-unpacked/StreamSenseLive.exe
 - `live-ingest/app.py`：实时音频接入服务，负责音频转 wav、静音过滤、写 Kafka。
 - `docker-compose.live.yml`：给原项目额外加 `live-ingest` 服务。
 
-## 课程设计表达
+## 实时链路说明
 
 这版可以说是“大数据实时流处理版”，因为实时音频不是直接请求 ASR，而是进入 Kafka，再由 Flink 调度 ASR，最后由 API 汇总展示。

@@ -140,5 +140,5 @@ coverage/
 # ------------------------------
 /*.docx
 /docs/course-report-ppt/
-/docs/期末作品报告填写稿.md
+/docs/*作品报告*.md
 /tools/create_course_report_ppt.mjs
