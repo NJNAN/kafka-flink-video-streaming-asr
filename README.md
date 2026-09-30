@@ -3,7 +3,7 @@
 </p>
 <h1 align="center">StreamSense</h1>
 <p align="center"><strong>基于 Kafka-Flink 的视频流语音转写与关键词分析系统</strong></p>
-<p align="center">视频与语音接入 · 流式调度 · 本地 ASR · 实时观测 · 字幕质量评测</p>
+<p align="center">实时语音管线 · 推理排队监控 · SLO 与故障恢复 · 可复现实验</p>
 
 <p align="center">
   <img src="https://img.shields.io/badge/Python-3.11%2B-3776AB?logo=python&logoColor=white" alt="Python 3.11+" />
@@ -12,7 +12,7 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-14B8A6" alt="MIT License" /></a>
 </p>
 <p align="center">
-  <a href="#项目亮点">项目亮点</a> · <a href="#实测结果">实测结果</a> · <a href="#快速开始">快速开始</a> · <a href="#四端交付">四端交付</a> · <a href="docs/usage-and-validation.md">使用与验证手册</a>
+  <a href="#项目亮点">项目亮点</a> · <a href="#故障恢复证据">实测证据</a> · <a href="#快速开始">快速开始</a> · <a href="#四端交付">四端交付</a> · <a href="docs/usage-and-validation.md">使用与验证手册</a>
 </p>
 
 ---
@@ -21,6 +21,27 @@ StreamSense 将视频、麦克风音频组织成一条可观察的实时处理�
 
 除了字幕结果，每个片段还保留端到端、ASR 与调度耗时，以及失败和重试信息。Web 看板、两个 Electron 客户端和 MeetFlow 移动端共享后端能力，支持从本地实验、结果复核到会议记录的完整演示。
 
+<!-- reliability-evidence:start -->
+## 故障恢复证据
+
+**把“能转写”推进到“出故障后能追溯、重放和验收”。** 2026-10-01 在隔离 Compose 栈上运行真实 Kafka → Flink → GPU ASR → API → SQLite 演练，逐片段核对输入与原始结果。
+
+| 停机对象 | 输入 / 原始结果 / 成功 | 缺失 / 逻辑重复 | 重放交付 | 启动后首个成功 |
+| :--- | :---: | :---: | ---: | ---: |
+| asr | 40 / 40 / 39 | 0 / 0 | 0 | 5.29s |
+| flink-taskmanager | 40 / 40 / 40 | 0 / 0 | 0 | 6.95s |
+| kafka | 40 / 40 / 40 | 0 / 0 | 1 | 7.59s |
+
+**容量结论也有边界。** 1/2/3/4/6 并发各 24 次固定 ASR 请求（共 120 次）；从 1 到 6 并发，HTTP P95 从 **363ms** 升至 **1721ms**，锁等待 P95 达 **1428ms**，吞吐没有按并发数增长。各档同样本 CER 均为 **1.79%**。这组是 ASR 服务容量测试，历史视频链路测试在下方单独说明。
+
+![固定容量与推理排队](docs/assets/reliability/capacity.png)
+
+**失败和恢复分别记录。** ASR 停机期间有明确失败结果；初始成功率与延迟 SLO 的超支照常公开。补偿重放不会改写初始数据，也不将短时演练称为 30 天可用性或端到端 exactly-once。
+
+[原始数据与自动报告](docs/可靠性实测报告.md) · [复现与恢复 Runbook](docs/可靠性实验操作手册.md) · [USE 指标](docs/USE资源清单.md) · [SLO / 错误预算](docs/SLO.md) · [评测口径](docs/评测口径说明.md)
+
+<!-- reliability-evidence:end -->
+
 ## 项目亮点
 
 | 方向 | 已实现能力 |
@@ -28,9 +49,9 @@ StreamSense 将视频、麦克风音频组织成一条可观察的实时处理�
 | 流式处理 | 本地视频 / RTSP / HTTP/FLV 接入，WebRTC VAD 动态切片，五个 Kafka Topic，PyFlink 调度与失败重试 |
 | 本地识别 | faster-whisper、能量 / 置信度 / 重复模式过滤、繁简转换、领域词表与纠错 |
 | 关键词与热词 | 自定义词表、TextRank、词频兜底，滑动窗口热词发现与确认 / 忽略 / 纠错 |
-| 可观测与追溯 | 分阶段延迟、P95、吞吐增量、失败片段、指标历史；Redis、JSONL、SQLite 分层保存 |
+| 可观测与追溯 | 分阶段延迟、锁 wait/hold/队列、Prometheus histogram 与告警、原始片段账本、输入/结果对照；Redis、JSONL、SQLite 分层保存 |
 | 多路与导出 | 按 stream_id 查询、导出、清理和查看热词；SRT / VTT / TXT / JSON / ZIP 输出与字幕编辑 |
-| 质量与验证 | CER / WER、关键词命中率、字幕覆盖缺口、并发压测、六项服务冒烟检查与轻量单元测试 |
+| 质量与验证 | CER / WER 与 jiwer 交叉校验、固定五档容量测试、三类停机演练、SLO / 预算计算、六项服务冒烟检查、GitHub Actions |
 | 交付形态 | Web Dashboard、离线 Electron 工作台、实时 Electron 采集端、MeetFlow 手机 / 平板 App |
 | 可选增强 | subtitle-agent：LLM + RAG 字幕审校与术语统一，需单独配置模型 API |
 
@@ -39,14 +60,14 @@ StreamSense 将视频、麦克风音频组织成一条可观察的实时处理�
 </p>
 <p align="center"><sub>项目演示素材；后端指标和实际处理结果可通过 API 与离线记录核对。</sub></p>
 
-## 实测结果
+## 历史视频链路基线
 
-以下是仓库已有的单机并发测试记录，本次文档更新未重跑压测：
+以下为既有视频测试，输入和时长不同，保留作历史参考；不能与上方 small 模型合成语音容量直接比较：
 
 | 视频并发 | 处理片段 | 失败片段 | 平均端到端延迟 | P95 延迟 | 观察 |
 | :--- | ---: | ---: | ---: | ---: | :--- |
 | **2 路** | **230** | **0** | **约 4.1 s** | **约 6.8 s** | 单机参考基线 |
-| **4 路** | 39 | 0 | 约 9.9 s | 约 14.5 s | ASR 排队造成延迟上升 |
+| **4 路** | 39 | 0 | 约 9.9 s | 约 14.5 s | 仅 60s 冒烟，不作为完整容量点 |
 
 结果体现该环境下的并发与延迟取舍；两组处理片段数不同，不能外推为多节点吞吐或生产稳定性。完整方法与条件见 [性能压测实验报告](docs/性能压测实验报告.md)，复测入口为 `tools/benchmark_streamsense.py`。
 
@@ -115,8 +136,10 @@ python tools/smoke_check.py
 ## 验证与结果留存
 
 ```powershell
-# 无需 Docker / GPU 的轻量测试
-python -m unittest discover -s tests -v
+# 无需 Docker / GPU：可靠性、SLO 和 jiwer 交叉校验
+pip install -r requirements-dev.txt
+python -m pytest -q
+python -m tools.reliability_report --check
 # 运行中的服务检查：API、ASR、Flink、Docker、Topic、指标
 python tools/smoke_check.py
 # 合成 / 自备视频的字幕生成与质量复核
@@ -140,7 +163,9 @@ StreamSense/
 ├── desktop-ui-live/           实时采集端与 Live Ingest
 ├── meeting-assistant-tablet/  MeetFlow PWA / Android
 ├── subtitle-agent/            可选 LLM + RAG 字幕增强
-├── tools/                     字幕生成、评测、压测与冒烟检查
+├── experiments/               隔离栈、固定语音样本、Prometheus 告警
+├── benchmarks/reliability/    逐请求和故障原始证据
+├── tools/                     字幕生成、评测、压测、故障重放与复算
 ├── tests/                     轻量回归测试
 ├── docs/                      配置说明、实验报告与界面素材
 └── docker-compose.yml         后端服务编排
@@ -155,4 +180,6 @@ StreamSense/
 - [详细使用与验证](docs/usage-and-validation.md)：技术选型、数据规格、所有功能与验收步骤。
 - [文档导航](docs/文档导航.md)：部署、质量评测、性能实验和问题解决文档。
 - [性能压测实验报告](docs/性能压测实验报告.md)：现有 2 路 / 4 路结果与条件。
+- [可靠性实测报告](docs/可靠性实测报告.md)：容量曲线、三类故障、初始失败和补偿结果。
+- [可靠性设计](docs/可靠性设计.md)：重试、原始账本与交付语义。
 - [MIT License](LICENSE)：项目许可。

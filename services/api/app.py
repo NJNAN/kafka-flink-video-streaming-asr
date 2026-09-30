@@ -15,12 +15,13 @@ import redis.asyncio as redis
 from aiokafka import AIOKafkaConsumer, AIOKafkaProducer
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from storage import (
     init_db,
+    receive_raw_result, mark_raw_processed, raw_results, raw_counts,
     insert_failed_segment,
     insert_failed_segments_many,
     insert_metrics_sample,
@@ -741,7 +742,20 @@ def build_metrics_payload(stream_id: str | None = None) -> dict[str, Any]:
     for sid in (stream_ids_from_history() if stream_id is None else [stream_id]):
         all_hotwords.extend(stream_hotwords(sid))
     all_hotwords.sort(key=lambda item: (-float(item.get("score", item.get("count", 0))), item.get("word", "")))
+    raw_items = raw_results(DB_PATH, limit=10000)
+    if stream_id:
+        raw_items = [item for item in raw_items if item.get("stream_id") == stream_id]
+    lock_waits = [float(item["lock_wait_time_ms"]) for item in raw_items if "lock_wait_time_ms" in item]
+    lock_holds = [float(item["lock_hold_time_ms"]) for item in raw_items if "lock_hold_time_ms" in item]
     return {
+        "raw_observability": {
+            "scope": "latest 10000 durable raw results, then filtered by stream",
+            "unique_segments": len(raw_items),
+            "replay_deliveries": sum(item.get("deliveries", 1)-1 for item in raw_items),
+            "lock_wait_samples": len(lock_waits),
+            "lock_wait_p95_ms": percentile(lock_waits, 0.95) if lock_waits else None,
+            "lock_hold_p95_ms": percentile(lock_holds, 0.95) if lock_holds else None,
+        },
         "status": "ok",
         "stream_id": stream_id or "",
         "active_stream_count": len(stream_ids_from_history()),
@@ -1249,9 +1263,9 @@ async def consume_transcripts() -> None:
             consumer = AIOKafkaConsumer(
                 TRANSCRIPT_TOPIC,
                 bootstrap_servers=KAFKA_BOOTSTRAP_SERVERS,
-                group_id="dashboard-keyword-service",
-                auto_offset_reset="latest",
-                enable_auto_commit=True,
+                group_id=os.getenv("API_CONSUMER_GROUP", "dashboard-keyword-service"),
+                auto_offset_reset="earliest",
+                enable_auto_commit=False,
             )
             kafka_producer = AIOKafkaProducer(bootstrap_servers=KAFKA_BOOTSTRAP_SERVERS)
 
@@ -1262,16 +1276,29 @@ async def consume_transcripts() -> None:
             print("[api] Kafka 字幕消费者已启动", flush=True)
 
             async for message in consumer:
-                transcript = json.loads(message.value.decode("utf-8"))
+                try:
+                    transcript = json.loads(message.value.decode("utf-8"))
+                    if not isinstance(transcript, dict):
+                        raise ValueError("transcript must be an object")
+                except (ValueError, UnicodeDecodeError) as exc:
+                    transcript = {"status": "error", "stream_id": "invalid", "text": "", "error": str(exc)}
                 transcript["api_received_at"] = now_ms()
-                if transcript.get("status") != "ok":
-                    await handle_failed_transcript(transcript)
-                    continue
-                if not transcript.get("text", "").strip():
-                    continue
-
-                for sentence_transcript in split_to_sentence_transcripts(transcript):
-                    await handle_ready_transcript(sentence_transcript)
+                if not transcript.get("segment_id"):
+                    # Malformed input has a stable broker identity rather than a random ID.
+                    transcript["segment_id"] = f"invalid:{message.topic}:{message.partition}:{message.offset}"
+                    transcript.setdefault("stream_id", "invalid")
+                if not transcript.get("stream_id"):
+                    transcript["stream_id"] = "invalid"
+                should_process, transcript = await asyncio.to_thread(receive_raw_result, DB_PATH, transcript)
+                if should_process:
+                    if transcript.get("status") != "ok":
+                        await handle_failed_transcript(transcript)
+                    elif transcript.get("text", "").strip():
+                        for sentence_transcript in split_to_sentence_transcripts(transcript):
+                            await handle_ready_transcript(sentence_transcript)
+                    await asyncio.to_thread(mark_raw_processed, DB_PATH, transcript)
+                # Single sequential consumer: only acknowledge after durable receipt/projection.
+                await consumer.commit()
 
         except Exception as exc:
             status["consumer_running"] = False
@@ -1308,6 +1335,20 @@ async def index() -> FileResponse:
 @app.get("/health")
 async def health() -> dict[str, Any]:
     return {"status": "ok", **status}
+
+
+@app.get("/api/reliability/segments")
+async def reliability_segments(run_id: str = "", limit: int = Query(1000, ge=1, le=10000)) -> list[dict[str, Any]]:
+    return await asyncio.to_thread(raw_results, DB_PATH, run_id, limit)
+
+
+@app.get("/metrics")
+async def prometheus_metrics() -> Response:
+    counters = await asyncio.to_thread(raw_counts, DB_PATH)
+    lines = []
+    for key, value in counters.items():
+        lines += [f"# TYPE streamsense_results_{key} gauge", f"streamsense_results_{key} {value}"]
+    return Response("\n".join(lines) + "\n", media_type="text/plain; version=0.0.4")
 
 
 @app.get("/api/status")

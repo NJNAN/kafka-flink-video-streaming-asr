@@ -15,6 +15,8 @@ from typing import Any, Optional
 
 from aiokafka import AIOKafkaConsumer
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import Response
+from runtime_metrics import InferenceGate
 from faster_whisper import WhisperModel
 from opencc import OpenCC
 from pydantic import BaseModel
@@ -107,7 +109,7 @@ stream_context: dict[str, str] = {}
 dynamic_hotwords_by_stream: dict[str, list[str]] = {}
 context_lock = Lock()
 dynamic_hotword_lock = Lock()
-inference_lock = Lock()
+inference_lock = InferenceGate()
 
 
 def bool_env(name: str, default: str) -> bool:
@@ -446,7 +448,7 @@ def transcribe_with_model(
     started_at = time.time()
     hotwords = build_hotwords(session_id, extra_hotwords)
 
-    with inference_lock:
+    with inference_lock.measure() as lock_sample:
         segments_iter, info = model.transcribe(
             str(media_path),
             language=os.getenv("ASR_LANGUAGE", "zh").strip() or None,
@@ -522,6 +524,7 @@ def transcribe_with_model(
         "language_probability": info.language_probability,
         "hotwords_used": parse_hotword_string(hotwords or ""),
         "inference_time_ms": int((finished_at - started_at) * 1000),
+        **lock_sample,
         "model": model_holder.loaded_model_name,
         "device": model_holder.device,
         "compute_type": model_holder.compute_type,
@@ -589,6 +592,16 @@ async def consume_hotword_updates() -> None:
         finally:
             if consumer is not None:
                 await consumer.stop()
+
+
+@app.get("/metrics")
+def prometheus_metrics() -> Response:
+    return Response(inference_lock.prometheus(), media_type="text/plain; version=0.0.4")
+
+
+@app.get("/runtime")
+def runtime_metrics() -> dict[str, Any]:
+    return inference_lock.snapshot()
 
 
 @app.get("/health")
@@ -668,6 +681,9 @@ def transcribe(request: TranscribeRequest) -> dict[str, Any]:
             "inference_time_ms": int((finished_at - started_at) * 1000),
             "audio_dbfs": dbfs,
             "segments": [],
+            "lock_wait_time_ms": 0,
+            "lock_hold_time_ms": 0,
+            "skipped_by_energy": True,
             "hotwords_used": parse_hotword_string(build_hotwords(session_id) or ""),
             "status": "ok",
         }

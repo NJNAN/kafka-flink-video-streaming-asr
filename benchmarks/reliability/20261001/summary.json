@@ -1,0 +1,247 @@
+{
+  "schema_version": 1,
+  "quantile": "linear interpolation at (n-1)*q",
+  "experiments": [
+    {
+      "file": "capacity.json",
+      "sha256": "8a3664d869345d18294cd4d38a4b87775bff6fffbe123a21a8c8e120de2c22e7",
+      "kind": "direct_asr_capacity",
+      "trials": [
+        {
+          "concurrency": 1,
+          "count": 24,
+          "throughput": 3.202,
+          "p50_ms": 309.18,
+          "p95_ms": 363.01,
+          "p99_ms": 395.46,
+          "wait_p95_ms": 0.0,
+          "hold_p95_ms": 349.22,
+          "max_queue": 0,
+          "quality": {
+            "char_edits": 6,
+            "reference_chars": 336,
+            "cer": 0.017857142857142856
+          }
+        },
+        {
+          "concurrency": 2,
+          "count": 24,
+          "throughput": 3.542,
+          "p50_ms": 559.09,
+          "p95_ms": 594.05,
+          "p99_ms": 600.55,
+          "wait_p95_ms": 301.64,
+          "hold_p95_ms": 312.91,
+          "max_queue": 1,
+          "quality": {
+            "char_edits": 6,
+            "reference_chars": 336,
+            "cer": 0.017857142857142856
+          }
+        },
+        {
+          "concurrency": 3,
+          "count": 24,
+          "throughput": 3.482,
+          "p50_ms": 830.42,
+          "p95_ms": 1037.2,
+          "p99_ms": 1056.68,
+          "wait_p95_ms": 664.49,
+          "hold_p95_ms": 365.15,
+          "max_queue": 2,
+          "quality": {
+            "char_edits": 6,
+            "reference_chars": 336,
+            "cer": 0.017857142857142856
+          }
+        },
+        {
+          "concurrency": 4,
+          "count": 24,
+          "throughput": 3.464,
+          "p50_ms": 1127.57,
+          "p95_ms": 1317.85,
+          "p99_ms": 1327.66,
+          "wait_p95_ms": 1002.32,
+          "hold_p95_ms": 344.77,
+          "max_queue": 3,
+          "quality": {
+            "char_edits": 6,
+            "reference_chars": 336,
+            "cer": 0.017857142857142856
+          }
+        },
+        {
+          "concurrency": 6,
+          "count": 24,
+          "throughput": 3.575,
+          "p50_ms": 1637.49,
+          "p95_ms": 1720.95,
+          "p99_ms": 1736.1,
+          "wait_p95_ms": 1428.49,
+          "hold_p95_ms": 298.95,
+          "max_queue": 5,
+          "quality": {
+            "char_edits": 6,
+            "reference_chars": 336,
+            "cer": 0.017857142857142856
+          }
+        }
+      ]
+    },
+    {
+      "file": "fault-asr.json",
+      "sha256": "116772924c9181d066f2ff0ed798c745a73099f8cb1bea425eab6934e105ee06",
+      "kind": "pipeline_fault",
+      "service": "asr",
+      "input_count": 40,
+      "result_count": 40,
+      "success_count": 39,
+      "replay_deliveries": 0,
+      "logical_duplicates": 0,
+      "missing": 0,
+      "stop_duration_ms": 834,
+      "first_result_after_start_seconds": 5.289,
+      "drain_after_last_ack_seconds": 10.225,
+      "full_recovery_seconds": 41.862,
+      "max_lag": 9,
+      "lag_unknown_samples": 0,
+      "slo": {
+        "window": "observed events only; not a 30-day availability claim",
+        "denominator": "expected input manifest",
+        "missing_inputs": 0,
+        "unknown_latency_events": 0,
+        "deadline_ms": 10000,
+        "success": {
+          "target": 0.99,
+          "good": 39,
+          "total": 40,
+          "sli": 0.975,
+          "allowed_bad_events": 0.40000000000000036,
+          "bad_events": 1,
+          "budget_remaining_fraction": -1.4999999999999978,
+          "burn_rate": 2.499999999999998
+        },
+        "deadline": {
+          "target": 0.95,
+          "good": 39,
+          "total": 40,
+          "sli": 0.975,
+          "allowed_bad_events": 2.0000000000000018,
+          "bad_events": 1,
+          "budget_remaining_fraction": 0.5000000000000004,
+          "burn_rate": 0.4999999999999996
+        }
+      },
+      "checkpoint_completed_before": 325,
+      "checkpoint_restore_observed": false,
+      "producer_error_count": 0
+    },
+    {
+      "file": "fault-flink-taskmanager.json",
+      "sha256": "de2f1e4094686ba3844b04916393d7dd871ecd4c3a5644a8f0d4249a2ccb0d0b",
+      "kind": "pipeline_fault",
+      "service": "flink-taskmanager",
+      "input_count": 40,
+      "result_count": 40,
+      "success_count": 40,
+      "replay_deliveries": 0,
+      "logical_duplicates": 0,
+      "missing": 0,
+      "stop_duration_ms": 2130,
+      "first_result_after_start_seconds": 6.954,
+      "drain_after_last_ack_seconds": 10.952,
+      "full_recovery_seconds": 41.232,
+      "max_lag": 13,
+      "lag_unknown_samples": 0,
+      "slo": {
+        "window": "observed events only; not a 30-day availability claim",
+        "denominator": "expected input manifest",
+        "missing_inputs": 0,
+        "unknown_latency_events": 0,
+        "deadline_ms": 10000,
+        "success": {
+          "target": 0.99,
+          "good": 40,
+          "total": 40,
+          "sli": 1.0,
+          "allowed_bad_events": 0.40000000000000036,
+          "bad_events": 0,
+          "budget_remaining_fraction": 1.0,
+          "burn_rate": 0.0
+        },
+        "deadline": {
+          "target": 0.95,
+          "good": 38,
+          "total": 40,
+          "sli": 0.95,
+          "allowed_bad_events": 2.0000000000000018,
+          "bad_events": 2,
+          "budget_remaining_fraction": 8.881784197001252e-16,
+          "burn_rate": 0.9999999999999992
+        }
+      },
+      "checkpoint_completed_before": 338,
+      "checkpoint_restore_observed": true,
+      "producer_error_count": 0
+    },
+    {
+      "file": "fault-kafka.json",
+      "sha256": "2d918a4d701af23e1d139fdf44661012d08f94b1581d350ce288e1032b196b42",
+      "kind": "pipeline_fault",
+      "service": "kafka",
+      "input_count": 40,
+      "result_count": 40,
+      "success_count": 40,
+      "replay_deliveries": 1,
+      "logical_duplicates": 0,
+      "missing": 0,
+      "stop_duration_ms": 1600,
+      "first_result_after_start_seconds": 7.588,
+      "drain_after_last_ack_seconds": 10.2,
+      "full_recovery_seconds": 53.798,
+      "max_lag": 5,
+      "lag_unknown_samples": 4,
+      "slo": {
+        "window": "observed events only; not a 30-day availability claim",
+        "denominator": "expected input manifest",
+        "missing_inputs": 0,
+        "unknown_latency_events": 0,
+        "deadline_ms": 10000,
+        "success": {
+          "target": 0.99,
+          "good": 40,
+          "total": 40,
+          "sli": 1.0,
+          "allowed_bad_events": 0.40000000000000036,
+          "bad_events": 0,
+          "budget_remaining_fraction": 1.0,
+          "burn_rate": 0.0
+        },
+        "deadline": {
+          "target": 0.95,
+          "good": 39,
+          "total": 40,
+          "sli": 0.975,
+          "allowed_bad_events": 2.0000000000000018,
+          "bad_events": 1,
+          "budget_remaining_fraction": 0.5000000000000004,
+          "burn_rate": 0.4999999999999996
+        }
+      },
+      "checkpoint_completed_before": 415,
+      "checkpoint_restore_observed": false,
+      "producer_error_count": 2
+    },
+    {
+      "file": "replay-asr.json",
+      "sha256": "5a9c5631f379b4eb5d726988765e2e038a21e4a21ba382bfe5554be302e269fd",
+      "kind": "failed_replay",
+      "replayed_count": 1,
+      "final_success_count": 40,
+      "logical_result_count": 40,
+      "logical_duplicates": 0,
+      "parent_sha256": "116772924c9181d066f2ff0ed798c745a73099f8cb1bea425eab6934e105ee06"
+    }
+  ]
+}

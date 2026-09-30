@@ -142,3 +142,6 @@ coverage/
 /docs/course-report-ppt/
 /docs/*作品报告*.md
 /tools/create_course_report_ppt.mjs
+
+# Isolated runtime data; published synthetic fixtures/evidence live separately.
+/data/reliability_lab/

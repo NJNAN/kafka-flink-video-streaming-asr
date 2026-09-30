@@ -1,0 +1,13 @@
+name: streamsense-lab-monitoring
+services:
+  prometheus:
+    image: prom/prometheus:v3.2.1
+    ports: ['18090:9090']
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./alerts.yml:/etc/prometheus/alerts.yml:ro
+    networks: [lab]
+networks:
+  lab:
+    external: true
+    name: streamsense-lab_default

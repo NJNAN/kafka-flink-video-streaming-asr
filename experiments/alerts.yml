@@ -1,0 +1,23 @@
+groups:
+  - name: streamsense
+    rules:
+      - alert: ASRInferenceQueueGrowing
+        expr: streamsense_asr_lock_queue_depth >= 3
+        for: 30s
+        labels:
+          severity: warning
+        annotations:
+          summary: 'ASR 推理锁持续排队：检查输入速率和 wait histogram'
+      - alert: ASRInferenceFailures
+        expr: increase(streamsense_asr_inference_errors_total[5m]) > 0
+        labels:
+          severity: warning
+        annotations:
+          summary: '推理锁内出现异常：检查 CUDA 和模型日志'
+      - alert: StreamSenseExporterDown
+        expr: up{job=~"streamsense-.*"} == 0
+        for: 15s
+        labels:
+          severity: critical
+        annotations:
+          summary: '指标接口失联，不能把缺失数据当作零错误'

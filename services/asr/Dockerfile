@@ -13,6 +13,6 @@ RUN sed -i 's|http://archive.ubuntu.com|http://mirrors.aliyun.com|g' /etc/apt/so
 COPY requirements.txt .
 RUN pip3 install --no-cache-dir -r requirements.txt
 
-COPY asr_service.py .
+COPY asr_service.py runtime_metrics.py ./
 
 CMD ["python3", "-m", "uvicorn", "asr_service:app", "--host", "0.0.0.0", "--port", "8000"]

@@ -1,9 +1,19 @@
 import sqlite3
+import json
 from pathlib import Path
 from typing import Any
 
 
 SCHEMA = """
+CREATE TABLE IF NOT EXISTS raw_results (
+  stream_id TEXT NOT NULL,
+  run_id TEXT NOT NULL,
+  segment_id TEXT NOT NULL,
+  payload TEXT NOT NULL,
+  processed INTEGER NOT NULL DEFAULT 0,
+  deliveries INTEGER NOT NULL DEFAULT 1,
+  PRIMARY KEY(stream_id, run_id, segment_id)
+);
 CREATE TABLE IF NOT EXISTS runs (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   stream_id TEXT NOT NULL,
@@ -245,3 +255,47 @@ def summary(db_path: Path, stream_id: str = "") -> list[dict[str, Any]]:
     """
     with connect(db_path) as conn:
         return [dict(row) for row in conn.execute(query, params).fetchall()]
+
+
+def receive_raw_result(db_path: Path, item: dict[str, Any]) -> tuple[bool, dict[str, Any]]:
+    """Persist canonical input before committing Kafka offsets. Successful replay is idempotent.
+
+    A later successful attempt may replace an error. Pending projections can be retried.
+    This does not make Redis, keyword Kafka events and sentence buffers transactional.
+    """
+    key = tuple(str(item.get(k, "")) for k in ("stream_id", "run_id", "segment_id"))
+    if not key[0] or not key[2]:
+        raise ValueError("raw result requires stream_id and segment_id")
+    with connect(db_path) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        row = conn.execute("SELECT * FROM raw_results WHERE stream_id=? AND run_id=? AND segment_id=?", key).fetchone()
+        if row:
+            canonical = json.loads(row["payload"])
+            if canonical.get("status") != "ok" and item.get("status") == "ok":
+                conn.execute("UPDATE raw_results SET payload=?, processed=0, deliveries=deliveries+1 WHERE stream_id=? AND run_id=? AND segment_id=?",
+                             (json.dumps(item, ensure_ascii=False), *key))
+                return True, item
+            conn.execute("UPDATE raw_results SET deliveries=deliveries+1 WHERE stream_id=? AND run_id=? AND segment_id=?", key)
+            return not bool(row["processed"]), canonical
+        conn.execute("INSERT INTO raw_results(stream_id,run_id,segment_id,payload) VALUES(?,?,?,?)",
+                     (*key, json.dumps(item, ensure_ascii=False)))
+        return True, item
+
+
+def mark_raw_processed(db_path: Path, item: dict[str, Any]) -> None:
+    key = tuple(str(item.get(k, "")) for k in ("stream_id", "run_id", "segment_id"))
+    with connect(db_path) as conn:
+        conn.execute("UPDATE raw_results SET processed=1 WHERE stream_id=? AND run_id=? AND segment_id=?", key)
+
+
+def raw_results(db_path: Path, run_id: str = "", limit: int = 10000) -> list[dict[str, Any]]:
+    where, params = ("WHERE run_id=?", (run_id,)) if run_id else ("", ())
+    with connect(db_path) as conn:
+        rows = conn.execute(f"SELECT * FROM raw_results {where} ORDER BY rowid DESC LIMIT ?", (*params, limit)).fetchall()
+    return [{**json.loads(row["payload"]), "deliveries": row["deliveries"], "processed": bool(row["processed"])} for row in rows]
+
+
+def raw_counts(db_path: Path) -> dict[str, int]:
+    with connect(db_path) as conn:
+        row = conn.execute("SELECT COUNT(*) AS unique_segments, COALESCE(SUM(deliveries-1),0) AS replays, COALESCE(SUM(1-processed),0) AS pending FROM raw_results").fetchone()
+    return dict(row)

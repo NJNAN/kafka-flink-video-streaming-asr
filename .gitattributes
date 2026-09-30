@@ -16,3 +16,6 @@
 *.flv binary
 *.wav binary
 *.mp3 binary
+
+# Preserve published raw experiment bytes across Windows/Linux clones.
+/benchmarks/reliability/** -text whitespace=cr-at-eol
